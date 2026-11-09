@@ -92,7 +92,6 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
-    use crate::capture::Frames;
     use crate::clock::Clock;
     use crate::desk::DeskMessage;
 
@@ -108,7 +107,7 @@ mod tests {
         let (desk, _): (mpsc::Sender<DeskMessage>, _) = mpsc::channel(1);
         let (input, _): (mpsc::Sender<InputCommand>, _) = mpsc::channel(1);
         let (view, _) = watch::channel(None);
-        let frames: Frames = Frames::new(1);
+        let (_, frames) = watch::channel(None);
         let (_, cursor) = watch::channel(None);
         let ports: SessionPorts = SessionPorts {
             desk,

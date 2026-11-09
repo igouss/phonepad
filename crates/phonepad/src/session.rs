@@ -8,11 +8,10 @@ use phonepad_core::desk::DeskInput;
 use phonepad_core::geometry::{Point, Size};
 use phonepad_core::input::InputCommand;
 use phonepad_core::stream::{self, Stream, StreamCommand, StreamEvent, StreamInput};
-use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{mpsc, watch};
 use tokio::task;
 
-use crate::capture::{Frame, Frames};
+use crate::capture::{Frame, LatestFrame};
 use crate::clock::Clock;
 use crate::desk::DeskMessage;
 use crate::wire::{self, PhoneMessage};
@@ -22,17 +21,44 @@ use crate::{input, jpeg};
 pub struct SessionPorts {
     pub desk: mpsc::Sender<DeskMessage>,
     pub input: mpsc::Sender<InputCommand>,
-    pub frames: Frames,
+    pub frames: watch::Receiver<LatestFrame>,
     pub cursor: watch::Receiver<Option<Point>>,
     pub view: watch::Sender<Option<Size>>,
     pub clock: Clock,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Shown {
+    region: Point,
+    cursor: Point,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Update {
+    Image,
+    CursorOnly { region: Point, cursor: Point },
+    Nothing,
+}
+
+fn next_update(image_waiting: bool, shown: Option<Shown>, cursor: Option<Point>) -> Update {
+    match (cursor, image_waiting, shown) {
+        (None, _, _) => Update::Nothing,
+        (Some(_), true, _) => Update::Image,
+        (Some(cursor), false, Some(shown)) if shown.cursor != cursor => Update::CursorOnly {
+            region: shown.region,
+            cursor,
+        },
+        (Some(_), false, Some(_) | None) => Update::Nothing,
+    }
+}
+
 struct Session {
     socket: WebSocket,
     stream: Stream,
-    frames: broadcast::Receiver<Arc<Frame>>,
-    latest: Option<Arc<Frame>>,
+    frames: watch::Receiver<LatestFrame>,
+    cursor: watch::Receiver<Option<Point>>,
+    sent_image: LatestFrame,
+    shown: Option<Shown>,
     ports: SessionPorts,
 }
 
@@ -40,8 +66,10 @@ pub async fn run(socket: WebSocket, ports: SessionPorts) {
     let mut session: Session = Session {
         socket,
         stream: Stream::Hidden,
-        frames: ports.frames.subscribe(),
-        latest: None,
+        frames: ports.frames.clone(),
+        cursor: ports.cursor.clone(),
+        sent_image: None,
+        shown: None,
         ports,
     };
     if let Err(err) = session.serve().await {
@@ -67,14 +95,14 @@ impl Session {
                     Some(Ok(Message::Close(_))) | None => return Ok(()),
                     Some(Err(err)) => return Err(err.into()),
                 },
-                captured = self.frames.recv() => match captured {
-                    Ok(frame) => {
-                        self.latest = Some(frame);
-                        self.step(StreamInput::FrameReady).await?;
-                    }
-                    Err(RecvError::Lagged(_)) => {}
-                    Err(RecvError::Closed) => return Err(anyhow!("capture channel closed")),
-                },
+                changed = self.frames.changed() => {
+                    changed?;
+                    self.offer_update().await?;
+                }
+                changed = self.cursor.changed() => {
+                    changed?;
+                    self.offer_update().await?;
+                }
             }
         }
     }
@@ -92,7 +120,10 @@ impl Session {
                 })
                 .await
             }
-            Ok(PhoneMessage::Visible(visible)) => self.step(StreamInput::Visibility(visible)).await,
+            Ok(PhoneMessage::Visible(visible)) => {
+                self.step(StreamInput::Visibility(visible)).await?;
+                self.offer_update().await
+            }
             Ok(PhoneMessage::View(size)) => {
                 self.ports.view.send_replace(size);
                 Ok(())
@@ -138,22 +169,115 @@ impl Session {
             .map_err(|_| anyhow!("desk stopped"))
     }
 
+    fn update(&self) -> Update {
+        let image_waiting: bool = match (self.frames.borrow().as_ref(), self.sent_image.as_ref()) {
+            (Some(latest), Some(sent)) => !Arc::ptr_eq(latest, sent),
+            (Some(_), None) => true,
+            (None, Some(_) | None) => false,
+        };
+        next_update(image_waiting, self.shown, *self.cursor.borrow())
+    }
+
+    async fn offer_update(&mut self) -> anyhow::Result<()> {
+        match self.update() {
+            Update::Image | Update::CursorOnly { .. } => self.step(StreamInput::FrameReady).await,
+            Update::Nothing => Ok(()),
+        }
+    }
+
     async fn send_latest_frame(&mut self) -> anyhow::Result<Option<StreamInput>> {
-        let Some(frame) = self.latest.clone() else {
-            eprintln!("session: no frame to send; settling the send as acknowledged");
+        match self.update() {
+            Update::Image => self.send_image().await,
+            Update::CursorOnly { region, cursor } => {
+                self.socket
+                    .send(Message::Binary(
+                        wire::frame_message(region, cursor, &[]).into(),
+                    ))
+                    .await?;
+                self.shown = Some(Shown { region, cursor });
+                Ok(None)
+            }
+            Update::Nothing => Ok(Some(StreamInput::Ack)),
+        }
+    }
+
+    async fn send_image(&mut self) -> anyhow::Result<Option<StreamInput>> {
+        let Some(frame) = self.frames.borrow().clone() else {
             return Ok(Some(StreamInput::Ack));
         };
-        let origin: Point = frame.origin;
-        let jpeg: Vec<u8> = task::spawn_blocking(move || jpeg::encode(&frame)).await??;
-        let Some(cursor) = *self.ports.cursor.borrow() else {
-            eprintln!("session: no cursor sample; settling the send as acknowledged");
+        let encoded: Arc<Frame> = Arc::clone(&frame);
+        let jpeg: Vec<u8> = task::spawn_blocking(move || jpeg::encode(&encoded)).await??;
+        let Some(cursor) = *self.cursor.borrow() else {
             return Ok(Some(StreamInput::Ack));
         };
         self.socket
             .send(Message::Binary(
-                wire::frame_message(origin, cursor, &jpeg).into(),
+                wire::frame_message(frame.origin, cursor, &jpeg).into(),
             ))
             .await?;
+        self.shown = Some(Shown {
+            region: frame.origin,
+            cursor,
+        });
+        self.sent_image = Some(frame);
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const REGION: Point = Point { x: 100, y: 200 };
+    const HERE: Point = Point { x: 400, y: 500 };
+    const THERE: Point = Point { x: 401, y: 500 };
+
+    fn shown_at(cursor: Point) -> Option<Shown> {
+        Some(Shown {
+            region: REGION,
+            cursor,
+        })
+    }
+
+    #[test]
+    fn no_cursor_sample_sends_nothing() {
+        assert_eq!(next_update(true, None, None), Update::Nothing);
+    }
+
+    #[test]
+    fn nothing_shown_and_no_image_sends_nothing() {
+        assert_eq!(next_update(false, None, Some(HERE)), Update::Nothing);
+    }
+
+    #[test]
+    fn first_image_is_sent() {
+        assert_eq!(next_update(true, None, Some(HERE)), Update::Image);
+    }
+
+    #[test]
+    fn new_image_wins_over_cursor_move() {
+        assert_eq!(
+            next_update(true, shown_at(HERE), Some(THERE)),
+            Update::Image
+        );
+    }
+
+    #[test]
+    fn cursor_move_without_new_image_sends_header_for_shown_region() {
+        assert_eq!(
+            next_update(false, shown_at(HERE), Some(THERE)),
+            Update::CursorOnly {
+                region: REGION,
+                cursor: THERE
+            }
+        );
+    }
+
+    #[test]
+    fn still_cursor_without_new_image_sends_nothing() {
+        assert_eq!(
+            next_update(false, shown_at(HERE), Some(HERE)),
+            Update::Nothing
+        );
     }
 }

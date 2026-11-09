@@ -68,22 +68,29 @@ function sendView() {
   view.height = Math.round(r.height * devicePixelRatio);
   send({ t: "view", w: Math.round(r.width * zoom), h: Math.round(r.height * zoom) });
 }
+let shown = null;
+function paint(img, rx, ry, cx, cy) {
+  const W = view.width, H = view.height;
+  const s = Math.min(W / img.width, H / img.height);
+  const ox = (W - img.width * s) / 2, oy = (H - img.height * s) / 2;
+  ctx.fillStyle = "#1b1b1b"; ctx.fillRect(0, 0, W, H);
+  ctx.drawImage(img, ox, oy, img.width * s, img.height * s);
+  const px = ox + (cx - rx) * s, py = oy + (cy - ry) * s, rad = 14 * devicePixelRatio;
+  ctx.lineWidth = 5 * devicePixelRatio; ctx.strokeStyle = "rgba(0,0,0,.7)";
+  ctx.beginPath(); ctx.arc(px, py, rad, 0, 2 * Math.PI); ctx.stroke();
+  ctx.lineWidth = 2.5 * devicePixelRatio; ctx.strokeStyle = "#3d6";
+  ctx.beginPath(); ctx.arc(px, py, rad, 0, 2 * Math.PI); ctx.stroke();
+}
 async function drawFrame(buf) {
   const h = new DataView(buf, 0, 16);
   const rx = h.getInt32(0), ry = h.getInt32(4), cx = h.getInt32(8), cy = h.getInt32(12);
   try {
-    const img = await createImageBitmap(new Blob([buf.slice(16)], { type: "image/jpeg" }));
-    const W = view.width, H = view.height;
-    const s = Math.min(W / img.width, H / img.height);
-    const ox = (W - img.width * s) / 2, oy = (H - img.height * s) / 2;
-    ctx.fillStyle = "#1b1b1b"; ctx.fillRect(0, 0, W, H);
-    ctx.drawImage(img, ox, oy, img.width * s, img.height * s);
-    const px = ox + (cx - rx) * s, py = oy + (cy - ry) * s, rad = 14 * devicePixelRatio;
-    ctx.lineWidth = 5 * devicePixelRatio; ctx.strokeStyle = "rgba(0,0,0,.7)";
-    ctx.beginPath(); ctx.arc(px, py, rad, 0, 2 * Math.PI); ctx.stroke();
-    ctx.lineWidth = 2.5 * devicePixelRatio; ctx.strokeStyle = "#3d6";
-    ctx.beginPath(); ctx.arc(px, py, rad, 0, 2 * Math.PI); ctx.stroke();
-    img.close();
+    if (buf.byteLength > 16) {
+      const img = await createImageBitmap(new Blob([buf.slice(16)], { type: "image/jpeg" }));
+      if (shown) shown.close();
+      shown = img;
+    }
+    if (shown) paint(shown, rx, ry, cx, cy);
   } finally {
     send({ t: "ack" });
   }

@@ -19,7 +19,6 @@ pub(super) fn channel_order(format: wl_shm::Format) -> Option<ChannelOrder> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn xrgb_is_bgra_in_memory() {
         assert_eq!(

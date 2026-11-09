@@ -8,9 +8,10 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::{self, JoinHandle};
 use tokio::time::{self, Interval, MissedTickBehavior};
 
-use crate::capture::{Capture, Frames};
+use crate::capture::{Capture, LatestFrame};
 use crate::clock::Clock;
 use crate::hypr;
+use crate::owe::WallpaperShell;
 
 const LOCAL_MOUSE_POLL: Duration = Duration::from_millis(100);
 const QUEUE: usize = 64;
@@ -42,10 +43,11 @@ pub struct DeskShell {
     capture_generation: u64,
     local_mouse_watch: Option<JoinHandle<()>>,
     pointer: PointerStyle,
+    wallpaper: WallpaperShell,
     clock: Clock,
     view: watch::Receiver<Option<Size>>,
     cursor: watch::Sender<Option<Point>>,
-    frames: Frames,
+    frames: watch::Sender<LatestFrame>,
     inbox: mpsc::Sender<DeskMessage>,
 }
 
@@ -54,7 +56,7 @@ pub fn spawn(
     clock: Clock,
     view: watch::Receiver<Option<Size>>,
     cursor: watch::Sender<Option<Point>>,
-    frames: Frames,
+    frames: watch::Sender<LatestFrame>,
 ) -> mpsc::Sender<DeskMessage> {
     let (inbox, receiver): (mpsc::Sender<DeskMessage>, mpsc::Receiver<DeskMessage>) =
         mpsc::channel(QUEUE);
@@ -64,6 +66,7 @@ pub fn spawn(
         capture_generation: 0,
         local_mouse_watch: None,
         pointer,
+        wallpaper: WallpaperShell::from_env(),
         clock,
         view,
         cursor,
@@ -77,6 +80,7 @@ pub fn spawn(
 impl DeskShell {
     async fn run(mut self, mut receiver: mpsc::Receiver<DeskMessage>) {
         self.set_pointer(PointerSize::Normal).await;
+        self.wallpaper.startup().await;
         while let Some(message) = receiver.recv().await {
             match message {
                 DeskMessage::Input(input) => self.step(input).await,
@@ -101,7 +105,10 @@ impl DeskShell {
 
     async fn execute(&mut self, command: DeskCommand) {
         match command {
-            DeskCommand::StartCapture => self.start_capture(),
+            DeskCommand::StartCapture => {
+                self.start_capture();
+                self.wallpaper.capture_started().await;
+            }
             DeskCommand::StopCapture => self.stop_capture().await,
             DeskCommand::SetPointer(size) => self.set_pointer(size).await,
             DeskCommand::StartLocalMouseWatch => self.start_local_mouse_watch(),
@@ -134,6 +141,8 @@ impl DeskShell {
         if let Some(running) = self.capture.take() {
             join_bounded(running.capture).await;
         }
+        self.frames.send_replace(None);
+        self.wallpaper.capture_stopped().await;
     }
 
     async fn capture_exited(&mut self, generation: u64) {

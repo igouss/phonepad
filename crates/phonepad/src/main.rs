@@ -5,6 +5,7 @@ mod http;
 mod hypr;
 mod input;
 mod jpeg;
+mod owe;
 mod session;
 mod wire;
 
@@ -20,13 +21,12 @@ use tokio::net::TcpListener;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::capture::Frames;
+use crate::capture::LatestFrame;
 use crate::clock::Clock;
 use crate::desk::{DeskMessage, PointerStyle};
 use crate::session::SessionPorts;
 
 const BIG_POINTER: u32 = 64;
-const FRAME_BACKLOG: usize = 4;
 const DEFAULT_POINTER: u32 = 24;
 
 #[tokio::main]
@@ -42,7 +42,8 @@ async fn main() -> anyhow::Result<()> {
         input::spawn(input::open_device().context("create uinput device")?);
     let (view, view_watch): (watch::Sender<Option<Size>>, watch::Receiver<Option<Size>>) =
         watch::channel(None);
-    let frames: Frames = Frames::new(FRAME_BACKLOG);
+    let (frames, frames_watch): (watch::Sender<LatestFrame>, watch::Receiver<LatestFrame>) =
+        watch::channel(None);
     let (cursor, cursor_watch): (watch::Sender<Option<Point>>, watch::Receiver<Option<Point>>) =
         watch::channel(None);
     let pointer: PointerStyle = PointerStyle {
@@ -53,12 +54,11 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or(DEFAULT_POINTER),
         big: BIG_POINTER,
     };
-    let desk: mpsc::Sender<DeskMessage> =
-        desk::spawn(pointer, clock, view_watch, cursor, frames.clone());
+    let desk: mpsc::Sender<DeskMessage> = desk::spawn(pointer, clock, view_watch, cursor, frames);
     let ports: SessionPorts = SessionPorts {
         desk: desk.clone(),
         input,
-        frames,
+        frames: frames_watch,
         cursor: cursor_watch,
         view,
         clock,

@@ -2,6 +2,7 @@ use std::env;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -61,7 +62,17 @@ fn query<T: DeserializeOwned>(command: &str) -> anyhow::Result<T> {
     serde_json::from_slice(&reply).with_context(|| format!("hyprctl j/{command} reply"))
 }
 
+static SOCKET: OnceLock<PathBuf> = OnceLock::new();
+
 fn socket_path() -> anyhow::Result<PathBuf> {
+    if let Some(path) = SOCKET.get() {
+        return Ok(path.clone());
+    }
+    let path: PathBuf = resolve_socket_path()?;
+    Ok(SOCKET.get_or_init(|| path).clone())
+}
+
+fn resolve_socket_path() -> anyhow::Result<PathBuf> {
     let runtime: String = env::var("XDG_RUNTIME_DIR").context("XDG_RUNTIME_DIR")?;
     let instance: String =
         env::var("HYPRLAND_INSTANCE_SIGNATURE").context("HYPRLAND_INSTANCE_SIGNATURE")?;

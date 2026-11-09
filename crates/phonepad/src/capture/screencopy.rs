@@ -5,10 +5,10 @@ use std::os::unix::fs::FileExt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
-use phonepad_core::geometry::{Point, Region, Size, region_around};
+use phonepad_core::geometry::{Monitor, Point, Region, Size, region_around};
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::fs::{MemfdFlags, memfd_create};
 use rustix::io::Errno;
@@ -28,15 +28,18 @@ use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::{
     self, ZwlrScreencopyManagerV1,
 };
 
-use super::format::channel_order;
-use super::{ChannelOrder, Frame, Frames};
 use crate::hypr;
 
-const IN_FLIGHT: usize = 4;
+use super::format::channel_order;
+use super::plan::{CopyMode, IN_FLIGHT, IssuePlan, is_new_image, plan_issue};
+use super::{ChannelOrder, Frame, LatestFrame};
+
 const RETRY: Duration = Duration::from_millis(100);
-const POLL_TIMEOUT: Timespec = Timespec {
+const QUIET_RECHECK: Duration = Duration::from_millis(100);
+const MONITORS_MAX_AGE: Duration = Duration::from_secs(1);
+const WAKE: Timespec = Timespec {
     tv_sec: 0,
-    tv_nsec: 100_000_000,
+    tv_nsec: 16_000_000,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -62,7 +65,9 @@ struct Buffer {
 }
 
 struct InFlight {
-    origin: Point,
+    region: Region,
+    mode: CopyMode,
+    frame: ZwlrScreencopyFrameV1,
     layout: Option<Layout>,
     y_invert: bool,
 }
@@ -78,9 +83,16 @@ struct State {
     outputs: Vec<NamedOutput>,
     view: watch::Receiver<Option<Size>>,
     cursor: watch::Receiver<Option<Point>>,
-    frames: Frames,
+    frames: watch::Sender<LatestFrame>,
     buffers: [Option<Buffer>; IN_FLIGHT],
     captures: [Option<InFlight>; IN_FLIGHT],
+    wanted: Option<Region>,
+    issued: Option<Region>,
+    monitors: Vec<Monitor>,
+    monitors_at: Option<Instant>,
+    published: LatestFrame,
+    unchanged_at: Option<Instant>,
+    scratch: Vec<u8>,
     syncs: u32,
     failed: bool,
     fatal: Option<String>,
@@ -90,7 +102,7 @@ pub(super) fn run(
     stop: &AtomicBool,
     view: watch::Receiver<Option<Size>>,
     cursor: watch::Receiver<Option<Point>>,
-    frames: Frames,
+    frames: watch::Sender<LatestFrame>,
 ) -> anyhow::Result<()> {
     let conn: Connection = Connection::connect_to_env().context("wayland connect")?;
     let mut queue: EventQueue<State> = conn.new_event_queue();
@@ -105,6 +117,13 @@ pub(super) fn run(
         frames,
         buffers: [const { None }; IN_FLIGHT],
         captures: [const { None }; IN_FLIGHT],
+        wanted: None,
+        issued: None,
+        monitors: Vec::new(),
+        monitors_at: None,
+        published: None,
+        unchanged_at: None,
+        scratch: Vec::new(),
         syncs: 0,
         failed: false,
         fatal: None,
@@ -126,14 +145,11 @@ pub(super) fn run(
         if let Some(fatal) = state.fatal.take() {
             bail!(fatal);
         }
-        let failed: bool = std::mem::take(&mut state.failed);
-        if !failed {
-            state.fill(&qh);
-        }
-        if failed || state.idle() {
+        if std::mem::take(&mut state.failed) {
             thread::sleep(RETRY);
             continue;
         }
+        state.fill(&qh);
         wait(&mut queue, &mut state)?;
     }
     Ok(())
@@ -147,7 +163,7 @@ fn wait(queue: &mut EventQueue<State>, state: &mut State) -> anyhow::Result<()> 
                 guard.connection_fd(),
                 PollFlags::IN,
             )];
-            match poll(&mut fds, Some(&POLL_TIMEOUT)) {
+            match poll(&mut fds, Some(&WAKE)) {
                 Ok(ready) => ready,
                 Err(Errno::INTR) => 0,
                 Err(err) => return Err(err).context("poll wayland socket"),
@@ -166,42 +182,89 @@ fn wait(queue: &mut EventQueue<State>, state: &mut State) -> anyhow::Result<()> 
 }
 
 impl State {
-    fn idle(&self) -> bool {
-        self.captures.iter().all(Option::is_none)
+    fn in_flight(&self) -> usize {
+        self.captures
+            .iter()
+            .filter(|c: &&Option<InFlight>| c.is_some())
+            .count()
     }
 
     fn fill(&mut self, qh: &QueueHandle<State>) {
+        if let Err(err) = self.refresh_wanted() {
+            eprintln!("capture: {err:#}");
+            return;
+        }
+        let Some(wanted) = self.wanted.clone() else {
+            return;
+        };
+        let moved: bool = self.issued.as_ref() != Some(&wanted);
+        if moved {
+            self.cancel_on_damage();
+        }
+        let recently_unchanged: bool = self
+            .unchanged_at
+            .is_some_and(|at: Instant| at.elapsed() < QUIET_RECHECK);
+        let plan: IssuePlan = plan_issue(moved, self.in_flight(), recently_unchanged);
         let idle: Vec<usize> = (0..IN_FLIGHT)
             .filter(|slot: &usize| self.captures[*slot].is_none())
+            .take(plan.count)
             .collect();
         if idle.is_empty() {
             return;
         }
-        let issued: anyhow::Result<()> = self.wanted_region().and_then(|region: Option<Region>| {
-            region.map_or(Ok(()), |region: Region| {
-                idle.into_iter()
-                    .try_for_each(|slot: usize| self.issue(slot, &region, qh))
-            })
-        });
-        if let Err(err) = issued {
-            eprintln!("capture: {err:#}");
+        match idle
+            .into_iter()
+            .try_for_each(|slot: usize| self.issue(slot, &wanted, plan.mode, qh))
+        {
+            Ok(()) => self.issued = Some(wanted),
+            Err(err) => eprintln!("capture: {err:#}"),
         }
     }
 
-    fn wanted_region(&self) -> anyhow::Result<Option<Region>> {
-        let Some(view) = *self.view.borrow() else {
-            return Ok(None);
+    fn refresh_wanted(&mut self) -> anyhow::Result<()> {
+        let changed: bool =
+            self.view.has_changed().unwrap_or(false) || self.cursor.has_changed().unwrap_or(false);
+        if !changed && self.wanted.is_some() {
+            return Ok(());
+        }
+        let view: Option<Size> = *self.view.borrow_and_update();
+        let cursor: Option<Point> = *self.cursor.borrow_and_update();
+        let (Some(view), Some(cursor)) = (view, cursor) else {
+            self.wanted = None;
+            return Ok(());
         };
-        let Some(cursor) = *self.cursor.borrow() else {
-            return Ok(None);
-        };
-        Ok(region_around(cursor, view, &hypr::monitors()?))
+        if self
+            .monitors_at
+            .is_none_or(|at: Instant| at.elapsed() > MONITORS_MAX_AGE)
+        {
+            self.monitors = hypr::monitors()?;
+            self.monitors_at = Some(Instant::now());
+        }
+        self.wanted = region_around(cursor, view, &self.monitors);
+        Ok(())
+    }
+
+    fn cancel_on_damage(&mut self) {
+        for slot in 0..IN_FLIGHT {
+            if self.captures[slot]
+                .as_ref()
+                .is_some_and(|c: &InFlight| c.mode == CopyMode::OnDamage)
+                && let Some(cancelled) = self.captures[slot].take()
+            {
+                cancelled.frame.destroy();
+                if let Some(buffer) = self.buffers[slot].take() {
+                    buffer.buffer.destroy();
+                    buffer.pool.destroy();
+                }
+            }
+        }
     }
 
     fn issue(
         &mut self,
         slot: usize,
         region: &Region,
+        mode: CopyMode,
         qh: &QueueHandle<State>,
     ) -> anyhow::Result<()> {
         let output: &WlOutput = &self
@@ -214,7 +277,7 @@ impl State {
             .manager
             .as_ref()
             .context("screencopy manager not bound")?;
-        manager.capture_output_region(
+        let frame: ZwlrScreencopyFrameV1 = manager.capture_output_region(
             0,
             output,
             region.local.x,
@@ -225,7 +288,9 @@ impl State {
             slot,
         );
         self.captures[slot] = Some(InFlight {
-            origin: region.global,
+            region: region.clone(),
+            mode,
+            frame,
             layout: None,
             y_invert: false,
         });
@@ -281,17 +346,27 @@ impl State {
             .as_ref()
             .ok_or_else(|| io::Error::other("no buffer attached"))?;
         let layout: Layout = buffer.layout;
-        let mut pixels: Vec<u8> = vec![0; layout.bytes()];
+        let mut pixels: Vec<u8> = std::mem::take(&mut self.scratch);
+        pixels.resize(layout.bytes(), 0);
         buffer.file.read_exact_at(&mut pixels, 0)?;
-        let _ = self.frames.send(Arc::new(Frame {
-            origin: capture.origin,
+        let captured: Frame = Frame {
+            origin: capture.region.global,
             width: layout.width,
             height: layout.height,
             stride: layout.stride,
             order: layout.order,
             y_invert: capture.y_invert,
             pixels,
-        }));
+        };
+        if is_new_image(self.published.as_deref(), &captured) {
+            let frame: Arc<Frame> = Arc::new(captured);
+            self.published = Some(Arc::clone(&frame));
+            self.frames.send_replace(Some(frame));
+            self.unchanged_at = None;
+        } else {
+            self.scratch = captured.pixels;
+            self.unchanged_at = Some(Instant::now());
+        }
         Ok(())
     }
 }
@@ -380,13 +455,21 @@ impl Dispatch<ZwlrScreencopyFrameV1, usize> for State {
                 }
             }
             zwlr_screencopy_frame_v1::Event::BufferDone => {
-                let layout: Option<Layout> = state.captures[slot].as_ref().and_then(|c| c.layout);
+                let pending: Option<(Option<Layout>, CopyMode)> = state.captures[slot]
+                    .as_ref()
+                    .map(|c: &InFlight| (c.layout, c.mode));
+                let Some((layout, mode)) = pending else {
+                    return;
+                };
                 let Some(layout) = layout else {
                     state.fatal = Some("compositor offered no supported shm format".to_owned());
                     return;
                 };
                 match state.buffer_for(slot, layout, qh) {
-                    Ok(buffer) => frame.copy(&buffer),
+                    Ok(buffer) => match mode {
+                        CopyMode::Immediate => frame.copy(&buffer),
+                        CopyMode::OnDamage => frame.copy_with_damage(&buffer),
+                    },
                     Err(err) => state.fatal = Some(format!("shm buffer: {err}")),
                 }
             }

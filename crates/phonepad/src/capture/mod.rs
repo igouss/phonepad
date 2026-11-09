@@ -1,5 +1,6 @@
 mod cursor;
 mod format;
+mod plan;
 mod screencopy;
 
 use std::sync::Arc;
@@ -7,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
 use phonepad_core::geometry::{Point, Size};
-use tokio::sync::{broadcast, watch};
+use tokio::sync::watch;
 
 use self::cursor::sample_cursor;
 use self::screencopy::run;
@@ -29,7 +30,7 @@ pub struct Frame {
     pub pixels: Vec<u8>,
 }
 
-pub type Frames = broadcast::Sender<Arc<Frame>>;
+pub type LatestFrame = Option<Arc<Frame>>;
 
 pub struct Capture {
     stop: Arc<AtomicBool>,
@@ -51,7 +52,7 @@ impl Capture {
     pub fn start(
         view: watch::Receiver<Option<Size>>,
         cursor: watch::Sender<Option<Point>>,
-        frames: Frames,
+        frames: watch::Sender<LatestFrame>,
         on_exit: Box<dyn FnOnce() + Send>,
     ) -> Capture {
         let stop: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));

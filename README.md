@@ -7,6 +7,7 @@ Use an Android phone as a touchpad and keyboard for a Hyprland desktop, with a l
 - ⌨ opens the phone keyboard; typed text goes to the focused window.
 - The touchpad shows the screen around the pointer, with a ring at the pointer. The zoom button cycles 1.5× / 2.5× / 4×.
 - The desktop pointer grows to size 64 while you control it from the phone and returns to normal when the real mouse moves.
+- While the app is open, an animated `owe` wallpaper is paused, so an unchanging screen costs nothing to stream. A pause you set yourself is left alone.
 
 KDE Connect does not work for this on Hyprland: its Wayland input needs the `RemoteDesktop` portal, which `xdg-desktop-portal-hyprland` does not implement.
 
@@ -22,8 +23,8 @@ phone (installed web app)  ──wss──▶  tailscale serve :443  ──▶  
 
 Two crates (see [ADR 0001](docs/adr/0001-rust-server.md)):
 
-- `crates/phonepad-core`: the decisions, as pure functions with no dependencies. `stream` is the per-phone frame flow control (up to 4 unacknowledged frames), `desk` the viewer count and pointer size, `geometry` the capture region, `keys` the US-layout typing plan. The state machines are sum types driven by `decide` and `evolve`.
-- `crates/phonepad`: the binary. axum serves the page and the WebSocket; one actor per phone session and one desk actor own the core state machines and execute their commands; one thread owns the uinput device; a capture thread keeps four `wlr-screencopy` region captures in flight and runs only while the app is visible on the phone; a cursor sampler keeps Hyprland IPC off the send path; `jpeg-encoder` encodes frames.
+- `crates/phonepad-core`: the decisions, as pure functions with no dependencies. `stream` is the per-phone frame flow control (up to 4 unacknowledged frames), `desk` the viewer count and pointer size, `wallpaper` whether phonepad paused the wallpaper (recorded in `$XDG_RUNTIME_DIR/phonepad/wallpaper-paused`, so a crashed run's pause is resumed at the next start), `geometry` the capture region, `keys` the US-layout typing plan. The state machines are sum types driven by `decide` and `evolve`.
+- `crates/phonepad`: the binary. axum serves the page and the WebSocket; one actor per phone session and one desk actor own the core state machines and execute their commands; one thread owns the uinput device; a capture thread runs only while the app is visible on the phone: it takes up to two immediate `wlr-screencopy` captures while the region moves and one damage-waiting capture while it is still, and publishes a frame only when the image changed; `jpeg-encoder` encodes only those frames. A cursor sampler (60/s while the pointer moves, 20/s when still) keeps Hyprland IPC off the send path; a pointer move with no new image goes to the phone as a 16-byte header, and the page redraws its last image with the ring at the new position.
 
 The page (`pad.html`, `manifest.webmanifest`, icons) is compiled into the binary, so changing it needs a rebuild.
 
@@ -81,7 +82,15 @@ On an Intel UHD Graphics 630 (Hyprland renders there; AQ_DRM_DEVICES selects the
 
 Each Hyprland screencopy takes about 50 ms regardless of region size, so throughput comes from pipelining.
 
-Frames sent are not all distinct images. Hyprland serves several pending captures from the same render, so many frames repeat the previous image; each still carries the current pointer position for the ring. With text changing continuously under the pointer, phonepad measured 42–89 frames/s, of which 11–21/s were distinct images, across runs. On a static screen it sends 46–95 frames/s with almost no distinct images. The Python version this replaced measured 52–59 frames/s on a static screen and about 14 distinct/s with changing content.
+CPU, % of one core, measured per thread from `/proc` over 5 s runs on the live service, with the wallpaper paused by phonepad:
+
+| Condition | phonepad | Hyprland | new images/s | pointer-only/s |
+|---|---|---|---|---|
+| App closed | 0.0 | 1.6–5.4 | – | – |
+| App open, pointer still | 1.2–2.8 | 3.2–3.8 | 0.1–1.9 | 0–0.1 |
+| Pointer moving, view following | 25–27 | 8.2–8.6 | 11.8–12.6 | 18–21 |
+
+With the pointer still, the remaining cost is Hyprland completing the damage-waiting capture for changes elsewhere on the screen, and the new images that real changes inside the region produce. While the pointer moves, every captured region is new, so each frame costs a capture copy, a comparison and a JPEG encode of about 5 ms.
 
 ## Limitations
 
