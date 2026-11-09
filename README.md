@@ -70,7 +70,7 @@ After changing code or the page: `cargo build --release && systemctl --user rest
 
 ## Measurements
 
-On an AMD Radeon HD 7970, 2560×1440 at 60 Hz, with a test client on the same machine:
+On an Intel UHD Graphics 630 (Hyprland renders there; AQ_DRM_DEVICES selects the iGPU), 2560×1440 at 60 Hz, with a test client on the same machine:
 
 | Captures in flight | Capture rate |
 |---|---|
