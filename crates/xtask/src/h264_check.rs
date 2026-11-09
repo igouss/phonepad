@@ -1,7 +1,9 @@
 use crate::report::Report;
-use phonepad_h264::{AccessUnit, CaptureSurface, EncodeError, Encoder, Size, nal};
+use phonepad_h264::{AccessUnit, CaptureSurface, Cropped, Cropper, EncodeError, H264, Size, nal};
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const RENDER_NODE: &str = "/dev/dri/renderD128";
@@ -27,6 +29,30 @@ const LINEAR: u64 = 0;
 const TIMED_ENCODES: usize = 300;
 const MAX_CPU_PER_FRAME: Duration = Duration::from_millis(5);
 const LATENCY_LIMIT: Duration = Duration::from_millis(17);
+const PIPELINE_DEPTH: usize = 3;
+
+struct Stages {
+    cropper: Cropper,
+    h264: H264,
+}
+
+impl Stages {
+    fn open() -> Result<Stages, EncodeError> {
+        let (cropper, h264): (Cropper, H264) =
+            phonepad_h264::open(Path::new(RENDER_NODE), SOURCE, OUTPUT, QP)?;
+        Ok(Stages { cropper, h264 })
+    }
+
+    fn encode(
+        &mut self,
+        surface: &Arc<CaptureSurface>,
+        origin: (u32, u32),
+        keyframe: bool,
+    ) -> Result<AccessUnit, EncodeError> {
+        let cropped: Cropped = self.cropper.crop(surface, origin)?;
+        self.h264.encode(cropped, keyframe)
+    }
+}
 
 fn screen() -> Vec<u8> {
     let width: usize = SOURCE.width as usize;
@@ -101,11 +127,11 @@ fn psnr(expected: &[u8], actual: &[u8]) -> f64 {
     }
 }
 
-fn encode_stream(encoder: &mut Encoder, bgra: &[u8]) -> Result<Vec<AccessUnit>, EncodeError> {
-    let surfaces: Vec<CaptureSurface> = filled_surfaces(encoder, bgra)?;
+fn encode_stream(stages: &mut Stages, bgra: &[u8]) -> Result<Vec<AccessUnit>, EncodeError> {
+    let surfaces: Vec<Arc<CaptureSurface>> = filled_surfaces(&mut stages.cropper, bgra)?;
     let mut units: Vec<AccessUnit> = Vec::with_capacity(UNITS);
     for frame in 0..UNITS {
-        units.push(encoder.encode(
+        units.push(stages.encode(
             &surfaces[frame % SURFACES],
             origin(frame),
             frame == UNITS - 1,
@@ -114,12 +140,15 @@ fn encode_stream(encoder: &mut Encoder, bgra: &[u8]) -> Result<Vec<AccessUnit>, 
     Ok(units)
 }
 
-fn filled_surfaces(encoder: &mut Encoder, bgra: &[u8]) -> Result<Vec<CaptureSurface>, EncodeError> {
-    let mut surfaces: Vec<CaptureSurface> = Vec::with_capacity(SURFACES);
+fn filled_surfaces(
+    cropper: &mut Cropper,
+    bgra: &[u8],
+) -> Result<Vec<Arc<CaptureSurface>>, EncodeError> {
+    let mut surfaces: Vec<Arc<CaptureSurface>> = Vec::with_capacity(SURFACES);
     for _ in 0..SURFACES {
-        let mut surface: CaptureSurface = encoder.surface()?;
+        let mut surface: CaptureSurface = cropper.surface()?;
         surface.fill(bgra)?;
-        surfaces.push(surface);
+        surfaces.push(Arc::new(surface));
     }
     Ok(surfaces)
 }
@@ -238,14 +267,14 @@ struct Timing {
     p95: Duration,
 }
 
-fn time_encodes(encoder: &mut Encoder, bgra: &[u8]) -> Result<Timing, String> {
-    let surfaces: Vec<CaptureSurface> =
-        filled_surfaces(encoder, bgra).map_err(|e| e.to_string())?;
+fn time_encodes(stages: &mut Stages, bgra: &[u8]) -> Result<Timing, String> {
+    let surfaces: Vec<Arc<CaptureSurface>> =
+        filled_surfaces(&mut stages.cropper, bgra).map_err(|e| e.to_string())?;
     let mut latencies: Vec<Duration> = Vec::with_capacity(TIMED_ENCODES);
     let cpu_before: Duration = process_cpu()?;
     for index in 0..TIMED_ENCODES {
         let start: Instant = Instant::now();
-        encoder
+        stages
             .encode(&surfaces[index % SURFACES], origin(index), false)
             .map_err(|e| e.to_string())?;
         latencies.push(start.elapsed());
@@ -260,8 +289,38 @@ fn time_encodes(encoder: &mut Encoder, bgra: &[u8]) -> Result<Timing, String> {
     })
 }
 
-fn check_surface(report: &mut Report, encoder: &mut Encoder) -> Result<(), EncodeError> {
-    let surface: CaptureSurface = encoder.surface()?;
+fn pipelined_rate(stages: &mut Stages, bgra: &[u8]) -> Result<f64, String> {
+    let surfaces: Vec<Arc<CaptureSurface>> =
+        filled_surfaces(&mut stages.cropper, bgra).map_err(|e| e.to_string())?;
+    let mut queued: VecDeque<Cropped> = VecDeque::with_capacity(PIPELINE_DEPTH);
+    let start: Instant = Instant::now();
+    for index in 0..TIMED_ENCODES {
+        queued.push_back(
+            stages
+                .cropper
+                .crop(&surfaces[index % SURFACES], origin(index))
+                .map_err(|e| e.to_string())?,
+        );
+        if queued.len() == PIPELINE_DEPTH
+            && let Some(oldest) = queued.pop_front()
+        {
+            stages
+                .h264
+                .encode(oldest, false)
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    while let Some(oldest) = queued.pop_front() {
+        stages
+            .h264
+            .encode(oldest, false)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(TIMED_ENCODES as f64 / start.elapsed().as_secs_f64())
+}
+
+fn check_surface(report: &mut Report, stages: &mut Stages) -> Result<(), EncodeError> {
+    let surface: Arc<CaptureSurface> = Arc::new(stages.cropper.surface()?);
     let dmabuf: &phonepad_h264::Dmabuf = surface.dmabuf();
     report.line(
         "dmabuf-format",
@@ -276,7 +335,7 @@ fn check_surface(report: &mut Report, encoder: &mut Encoder) -> Result<(), Encod
     );
     let outside: (u32, u32) = (SOURCE.width - OUTPUT.width + 1, 0);
     let rejected: bool = matches!(
-        encoder.encode(&surface, outside, false),
+        stages.cropper.crop(&surface, outside),
         Err(EncodeError::Crop { .. })
     );
     report.line(
@@ -284,9 +343,9 @@ fn check_surface(report: &mut Report, encoder: &mut Encoder) -> Result<(), Encod
         rejected,
         format!("a crop at {outside:?} that leaves the source is refused"),
     );
-    let mut other: Encoder = Encoder::open(Path::new(RENDER_NODE), SOURCE, OUTPUT, QP)?;
+    let mut other: Stages = Stages::open()?;
     let refused: bool = matches!(
-        other.encode(&surface, (0, 0), false),
+        other.cropper.crop(&surface, (0, 0)),
         Err(EncodeError::ForeignSurface)
     );
     report.line(
@@ -309,11 +368,10 @@ fn stream_file(units: &[AccessUnit]) -> Result<PathBuf, String> {
 }
 
 fn checks(report: &mut Report) -> Result<(), String> {
-    let mut encoder: Encoder =
-        Encoder::open(Path::new(RENDER_NODE), SOURCE, OUTPUT, QP).map_err(|e| e.to_string())?;
-    check_surface(report, &mut encoder).map_err(|e| e.to_string())?;
+    let mut stages: Stages = Stages::open().map_err(|e| e.to_string())?;
+    check_surface(report, &mut stages).map_err(|e| e.to_string())?;
     let bgra: Vec<u8> = screen();
-    let units: Vec<AccessUnit> = encode_stream(&mut encoder, &bgra).map_err(|e| e.to_string())?;
+    let units: Vec<AccessUnit> = encode_stream(&mut stages, &bgra).map_err(|e| e.to_string())?;
     let stream: PathBuf = stream_file(&units)?;
     let decoded: Result<Vec<u8>, String> = decode(&stream);
     std::fs::remove_file(&stream).map_err(|e| format!("{}: {e}", stream.display()))?;
@@ -323,7 +381,7 @@ fn checks(report: &mut Report) -> Result<(), String> {
         "INFO stream: {bytes} bytes in {UNITS} units, first unit {} bytes",
         units.first().map_or(0, |unit| unit.data.len())
     );
-    let timing: Timing = time_encodes(&mut encoder, &bgra)?;
+    let timing: Timing = time_encodes(&mut stages, &bgra)?;
     report.line(
         "cpu-per-frame",
         timing.cpu_per_frame <= MAX_CPU_PER_FRAME,
@@ -335,6 +393,10 @@ fn checks(report: &mut Report) -> Result<(), String> {
     println!(
         "INFO latency: median {:?}, p95 {:?} over {TIMED_ENCODES} encodes; ADR 0002 limit {LATENCY_LIMIT:?}; load-dependent on this shared desktop, so not a gate",
         timing.median, timing.p95
+    );
+    let rate: f64 = pipelined_rate(&mut stages, &bgra)?;
+    println!(
+        "INFO pipelined: {rate:.0} units/s with {PIPELINE_DEPTH} crops in flight ahead of the encoder; load-dependent, so not a gate"
     );
     Ok(())
 }

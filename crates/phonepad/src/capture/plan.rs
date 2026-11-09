@@ -60,6 +60,7 @@ pub(super) enum Slot<F> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Schedule {
     Idle,
+    Busy,
     EncodeNow,
     WaitFor(Duration),
 }
@@ -68,6 +69,7 @@ pub(super) enum Schedule {
 pub(super) struct Pending {
     pub(super) new_frame: bool,
     pub(super) keyframe: bool,
+    pub(super) encoder_busy: bool,
 }
 
 fn pixels(size: Size) -> Pixels {
@@ -117,7 +119,7 @@ pub(super) fn held<F>(slots: &[Slot<F>]) -> Option<(usize, u64)> {
         })
 }
 
-pub(super) fn to_issue<F>(slots: &[Slot<F>], in_flight: usize) -> Vec<usize> {
+pub(super) fn to_issue<F>(slots: &[Slot<F>], pinned: &[bool], in_flight: usize) -> Vec<usize> {
     let capturing: usize = slots
         .iter()
         .filter(|slot: &&Slot<F>| match slot {
@@ -129,8 +131,8 @@ pub(super) fn to_issue<F>(slots: &[Slot<F>], in_flight: usize) -> Vec<usize> {
         .iter()
         .enumerate()
         .filter_map(|(index, slot): (usize, &Slot<F>)| match slot {
-            Slot::Free => Some(index),
-            Slot::Capturing { .. } | Slot::Held { .. } => None,
+            Slot::Free if !pinned.get(index).copied().unwrap_or(true) => Some(index),
+            Slot::Free | Slot::Capturing { .. } | Slot::Held { .. } => None,
         })
         .take(in_flight.saturating_sub(capturing))
         .collect()
@@ -167,10 +169,11 @@ pub(super) fn schedule(
     since_last: Option<Duration>,
 ) -> Schedule {
     let changed: bool = pending.new_frame || pending.keyframe || shown != Some(wanted);
-    match (changed, since_last) {
-        (false, _) => Schedule::Idle,
-        (true, None) => Schedule::EncodeNow,
-        (true, Some(elapsed)) => match MIN_ENCODE_INTERVAL.checked_sub(elapsed) {
+    match (changed, pending.encoder_busy, since_last) {
+        (false, _, _) => Schedule::Idle,
+        (true, true, _) => Schedule::Busy,
+        (true, false, None) => Schedule::EncodeNow,
+        (true, false, Some(elapsed)) => match MIN_ENCODE_INTERVAL.checked_sub(elapsed) {
             Some(left) if !left.is_zero() => Schedule::WaitFor(left),
             Some(_) | None => Schedule::EncodeNow,
         },
@@ -196,14 +199,27 @@ mod tests {
     const QUIET: Pending = Pending {
         new_frame: false,
         keyframe: false,
+        encoder_busy: false,
     };
     const FRAME: Pending = Pending {
         new_frame: true,
         keyframe: false,
+        encoder_busy: false,
     };
     const KEY: Pending = Pending {
         new_frame: false,
         keyframe: true,
+        encoder_busy: false,
+    };
+    const FRAME_WHILE_BUSY: Pending = Pending {
+        new_frame: true,
+        keyframe: false,
+        encoder_busy: true,
+    };
+    const QUIET_WHILE_BUSY: Pending = Pending {
+        new_frame: false,
+        keyframe: false,
+        encoder_busy: true,
     };
     const LONG_AGO: Option<Duration> = Some(Duration::from_secs(1));
 
@@ -360,7 +376,7 @@ mod tests {
     #[test]
     fn no_free_slot_issues_nothing() {
         assert_eq!(
-            to_issue(&[Slot::Held { stamp: 1 }, capturing()], 2),
+            to_issue(&[Slot::Held { stamp: 1 }, capturing()], &[false, false], 2),
             Vec::<usize>::new()
         );
     }
@@ -368,7 +384,11 @@ mod tests {
     #[test]
     fn one_free_slot_below_the_limit_is_issued() {
         assert_eq!(
-            to_issue(&[Slot::Held { stamp: 1 }, capturing(), Slot::Free], 2),
+            to_issue(
+                &[Slot::Held { stamp: 1 }, capturing(), Slot::Free],
+                &[false, false, false],
+                2
+            ),
             vec![2]
         );
     }
@@ -376,7 +396,11 @@ mod tests {
     #[test]
     fn many_free_slots_are_issued_up_to_the_limit() {
         assert_eq!(
-            to_issue::<()>(&[Slot::Free, Slot::Free, Slot::Free], 2),
+            to_issue::<()>(
+                &[Slot::Free, Slot::Free, Slot::Free],
+                &[false, false, false],
+                2
+            ),
             vec![0, 1]
         );
     }
@@ -384,8 +408,28 @@ mod tests {
     #[test]
     fn slots_already_capturing_count_against_the_limit() {
         assert_eq!(
-            to_issue(&[capturing(), capturing(), Slot::Free], 2),
+            to_issue(
+                &[capturing(), capturing(), Slot::Free],
+                &[false, false, false],
+                2
+            ),
             Vec::<usize>::new()
+        );
+    }
+
+    #[test]
+    fn a_free_slot_the_encoder_still_reads_is_not_issued() {
+        assert_eq!(
+            to_issue::<()>(&[Slot::Free, Slot::Free], &[true, false], 2),
+            vec![1]
+        );
+    }
+
+    #[test]
+    fn a_slot_with_no_pin_record_is_not_issued() {
+        assert_eq!(
+            to_issue::<()>(&[Slot::Free, Slot::Free], &[false], 2),
+            vec![0]
         );
     }
 
@@ -430,6 +474,22 @@ mod tests {
         assert_eq!(
             schedule(QUIET, Some(HERE), THERE, LONG_AGO),
             Schedule::EncodeNow
+        );
+    }
+
+    #[test]
+    fn a_change_while_the_encoder_is_full_waits_for_it() {
+        assert_eq!(
+            schedule(FRAME_WHILE_BUSY, Some(HERE), HERE, LONG_AGO),
+            Schedule::Busy
+        );
+    }
+
+    #[test]
+    fn no_change_while_the_encoder_is_full_is_idle() {
+        assert_eq!(
+            schedule(QUIET_WHILE_BUSY, Some(HERE), HERE, LONG_AGO),
+            Schedule::Idle
         );
     }
 

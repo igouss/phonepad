@@ -1,4 +1,5 @@
 mod cursor;
+mod lane;
 mod plan;
 mod screencopy;
 

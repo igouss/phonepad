@@ -9,6 +9,7 @@ use std::ffi::CString;
 use std::os::fd::OwnedFd;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use ffi::MapError;
@@ -125,13 +126,21 @@ pub struct AccessUnit {
     pub data: Vec<u8>,
 }
 
-pub struct Encoder {
+pub struct Cropper {
     id: u64,
     source: Size,
     output: Size,
-    next_pts: i64,
     frames: ffi::HwFrames,
     graph: filter::Graph,
+}
+
+pub struct Cropped {
+    frame: frame::Video,
+    source: Arc<CaptureSurface>,
+}
+
+pub struct H264 {
+    next_pts: i64,
     encoder: encoder::video::Encoder,
 }
 
@@ -194,33 +203,37 @@ fn h264_encoder(
     context.open_with(options).map_err(step("open h264_vaapi"))
 }
 
-impl Encoder {
-    pub fn open(
-        render_node: &Path,
-        source: Size,
-        output: Size,
-        qp: u8,
-    ) -> Result<Encoder, EncodeError> {
-        let (w, h): (i32, i32) = checked_geometry(source, output)?;
-        let qp: u8 = checked_qp(qp)?;
-        let node: CString = CString::new(render_node.as_os_str().as_bytes())
-            .map_err(|_| EncodeError::RenderNode(render_node.to_path_buf()))?;
-        let time_base: Rational = Rational::new(1, FRAME_RATE);
-        let frames: ffi::HwFrames =
-            ffi::HwFrames::vaapi(&node, Pixel::BGRA, w, h).map_err(step("VA-API frames"))?;
-        let mut graph: filter::Graph = convert_graph(&frames, output, time_base)?;
-        let encoder: encoder::video::Encoder = h264_encoder(&mut graph, output, qp, time_base)?;
-        Ok(Encoder {
+pub fn open(
+    render_node: &Path,
+    source: Size,
+    output: Size,
+    qp: u8,
+) -> Result<(Cropper, H264), EncodeError> {
+    let (w, h): (i32, i32) = checked_geometry(source, output)?;
+    let qp: u8 = checked_qp(qp)?;
+    let node: CString = CString::new(render_node.as_os_str().as_bytes())
+        .map_err(|_| EncodeError::RenderNode(render_node.to_path_buf()))?;
+    let time_base: Rational = Rational::new(1, FRAME_RATE);
+    let frames: ffi::HwFrames =
+        ffi::HwFrames::vaapi(&node, Pixel::BGRA, w, h).map_err(step("VA-API frames"))?;
+    let mut graph: filter::Graph = convert_graph(&frames, output, time_base)?;
+    let encoder: encoder::video::Encoder = h264_encoder(&mut graph, output, qp, time_base)?;
+    Ok((
+        Cropper {
             id: NEXT_ENCODER.fetch_add(1, Ordering::Relaxed),
             source,
             output,
-            next_pts: 0,
             frames,
             graph,
+        },
+        H264 {
+            next_pts: 0,
             encoder,
-        })
-    }
+        },
+    ))
+}
 
+impl Cropper {
     pub fn surface(&mut self) -> Result<CaptureSurface, EncodeError> {
         let frame: frame::Video = self.frames.surface().map_err(step("allocate surface"))?;
         let plane: ffi::DrmPlane = ffi::export_drm(&frame).map_err(EncodeError::Export)?;
@@ -239,12 +252,11 @@ impl Encoder {
         })
     }
 
-    pub fn encode(
+    pub fn crop(
         &mut self,
-        surface: &CaptureSurface,
+        surface: &Arc<CaptureSurface>,
         crop_origin: (u32, u32),
-        keyframe: bool,
-    ) -> Result<AccessUnit, EncodeError> {
+    ) -> Result<Cropped, EncodeError> {
         if surface.encoder != self.id {
             return Err(EncodeError::ForeignSurface);
         }
@@ -261,6 +273,19 @@ impl Encoder {
             .sink()
             .frame(&mut nv12)
             .map_err(drained("scale_vaapi"))?;
+        Ok(Cropped {
+            frame: nv12,
+            source: Arc::clone(surface),
+        })
+    }
+}
+
+impl H264 {
+    pub fn encode(&mut self, cropped: Cropped, keyframe: bool) -> Result<AccessUnit, EncodeError> {
+        let Cropped {
+            frame: mut nv12,
+            source: read_by_the_gpu,
+        } = cropped;
         nv12.set_pts(Some(self.next_pts));
         if keyframe || self.next_pts == 0 {
             nv12.set_kind(picture::Type::I);
@@ -271,6 +296,7 @@ impl Encoder {
         self.encoder
             .receive_packet(&mut packet)
             .map_err(drained("h264_vaapi"))?;
+        drop(read_by_the_gpu);
         let data: Vec<u8> = packet.data().map(<[u8]>::to_vec).unwrap_or_default();
         Ok(AccessUnit {
             key: nal::contains_idr(&data),

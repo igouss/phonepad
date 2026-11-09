@@ -1,15 +1,14 @@
 use std::io;
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, BorrowedFd};
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
-use axum::body::Bytes;
 use phonepad_core::geometry::{Monitor, Point, Size};
-use phonepad_core::stream::UnitKind;
-use phonepad_h264::{AccessUnit, CaptureSurface, Dmabuf, Encoder};
+use phonepad_h264::{CaptureSurface, Cropped, Cropper, Dmabuf, H264};
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::io::Errno;
 use tokio::sync::{broadcast, watch};
@@ -31,14 +30,15 @@ use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::{
     self, ZwlrScreencopyManagerV1,
 };
 
-use crate::{hypr, wire};
+use crate::hypr;
 
+use super::lane::{Job, Lane};
 use super::plan::{
     self, CopyMode, Offer, Pending, Pixels, Schedule, Shape, Shot, Slot, Target, schedule,
 };
 use super::{Feed, KeyframeRequest, Unit};
 
-const POOL: usize = 3;
+const POOL: usize = 4;
 const IN_FLIGHT: usize = 2;
 const QP: u8 = 24;
 const LINEAR: u64 = 0;
@@ -47,13 +47,14 @@ const MONITORS_MAX_AGE: Duration = Duration::from_secs(1);
 const WAKE: Duration = Duration::from_millis(16);
 
 struct Surface {
-    surface: CaptureSurface,
+    surface: Arc<CaptureSurface>,
     buffer: WlBuffer,
 }
 
 struct Pool {
     shape: Shape,
-    encoder: Encoder,
+    cropper: Cropper,
+    lane: Lane,
     surfaces: Vec<Surface>,
     slots: Vec<Slot<ZwlrScreencopyFrameV1>>,
     new_frame: bool,
@@ -120,6 +121,14 @@ pub(super) fn run(stop: &AtomicBool, feed: Feed) -> anyhow::Result<()> {
         if let Err(err) = state.refresh_target() {
             eprintln!("capture: {err:#}");
         }
+        if state
+            .pool
+            .as_ref()
+            .is_some_and(|pool: &Pool| pool.lane.stopped())
+        {
+            close(&mut queue, &mut state)?;
+            bail!("the encode thread stopped");
+        }
         if let Some(target) = state.target.clone() {
             if state.pool.as_ref().map(|pool: &Pool| &pool.shape) != Some(&target.shape) {
                 close(&mut queue, &mut state)?;
@@ -146,26 +155,30 @@ fn close(queue: &mut EventQueue<State>, state: &mut State) -> anyhow::Result<()>
         surface.buffer.destroy();
     }
     queue.roundtrip(state).context("release capture buffers")?;
-    drop(pool);
-    Ok(())
+    pool.lane.finish()
 }
 
 fn wait(queue: &mut EventQueue<State>, state: &mut State, timeout: Duration) -> anyhow::Result<()> {
     queue.flush().context("wayland flush")?;
     if let Some(guard) = queue.prepare_read() {
         let limit: Timespec = Timespec::try_from(timeout).context("poll timeout")?;
-        let ready: usize = {
-            let mut fds: [PollFd<'_>; 1] = [PollFd::from_borrowed_fd(
-                guard.connection_fd(),
-                PollFlags::IN,
-            )];
+        let done: Option<BorrowedFd<'_>> =
+            state.pool.as_ref().map(|pool: &Pool| pool.lane.done_fd());
+        let wayland_ready: bool = {
+            let mut fds: Vec<PollFd<'_>> = std::iter::once(guard.connection_fd())
+                .chain(done)
+                .map(|fd: BorrowedFd<'_>| PollFd::from_borrowed_fd(fd, PollFlags::IN))
+                .collect();
             match poll(&mut fds, Some(&limit)) {
-                Ok(ready) => ready,
-                Err(Errno::INTR) => 0,
+                Ok(_) => !fds[0].revents().is_empty(),
+                Err(Errno::INTR) => false,
                 Err(err) => return Err(err).context("poll wayland socket"),
             }
         };
-        if ready > 0 {
+        if let Some(pool) = state.pool.as_ref() {
+            pool.lane.clear_done();
+        }
+        if wayland_ready {
             match guard.read() {
                 Ok(_) => {}
                 Err(WaylandError::Io(err)) if err.kind() == io::ErrorKind::WouldBlock => {}
@@ -192,7 +205,7 @@ impl Pool {
         qh: &QueueHandle<State>,
     ) -> anyhow::Result<Pool> {
         let dmabuf: &ZwpLinuxDmabufV1 = state.dmabuf.as_ref().context("linux-dmabuf not bound")?;
-        let mut encoder: Encoder = Encoder::open(
+        let (mut cropper, h264): (Cropper, H264) = phonepad_h264::open(
             render_node,
             source_size(shape.source),
             source_size(shape.view),
@@ -201,14 +214,18 @@ impl Pool {
         .with_context(|| format!("open the H.264 encoder for {shape:?}"))?;
         let surfaces: Vec<Surface> = (0..POOL)
             .map(|_| -> anyhow::Result<Surface> {
-                let surface: CaptureSurface = encoder.surface().context("encoder surface")?;
+                let surface: CaptureSurface = cropper.surface().context("encoder surface")?;
                 let buffer: WlBuffer = wl_buffer(dmabuf, surface.dmabuf(), qh)?;
-                Ok(Surface { surface, buffer })
+                Ok(Surface {
+                    surface: Arc::new(surface),
+                    buffer,
+                })
             })
             .collect::<anyhow::Result<Vec<Surface>>>()?;
         Ok(Pool {
             shape: shape.clone(),
-            encoder,
+            cropper,
+            lane: Lane::start(h264, state.units.clone())?,
             surfaces,
             slots: (0..POOL).map(|_| Slot::Free).collect(),
             new_frame: false,
@@ -282,7 +299,12 @@ impl State {
             .as_ref()
             .context("screencopy manager not bound")?;
         let mode: CopyMode = plan::copy_mode(plan::held(&pool.slots).is_some());
-        for index in plan::to_issue(&pool.slots, IN_FLIGHT) {
+        let pinned: Vec<bool> = pool
+            .surfaces
+            .iter()
+            .map(|surface: &Surface| Arc::strong_count(&surface.surface) > 1)
+            .collect();
+        for index in plan::to_issue(&pool.slots, &pinned, IN_FLIGHT) {
             pool.slots[index] = Slot::Capturing {
                 frame: manager.capture_output(0, output, qh, index),
                 mode,
@@ -302,32 +324,25 @@ impl State {
         let pending: Pending = Pending {
             new_frame: pool.new_frame,
             keyframe: self.keyframe.pending(),
+            encoder_busy: pool.lane.busy(),
         };
         let since_last: Option<Duration> = pool.encoded_at.map(|at: Instant| at.elapsed());
         match schedule(pending, pool.shown, wanted, since_last) {
-            Schedule::Idle => Ok(WAKE),
+            Schedule::Idle | Schedule::Busy => Ok(WAKE),
             Schedule::WaitFor(left) => Ok(left.min(WAKE)),
             Schedule::EncodeNow => {
-                let keyframe: bool = self.keyframe.take();
-                let unit: AccessUnit = pool
-                    .encoder
-                    .encode(&pool.surfaces[held].surface, wanted.crop, keyframe)
-                    .context("encode")?;
+                let cropped: Cropped = pool
+                    .cropper
+                    .crop(&pool.surfaces[held].surface, wanted.crop)
+                    .context("crop")?;
+                pool.lane.submit(Job {
+                    cropped,
+                    keyframe: self.keyframe.take(),
+                    shot: wanted,
+                })?;
                 pool.new_frame = false;
                 pool.shown = Some(wanted);
                 pool.encoded_at = Some(Instant::now());
-                let kind: UnitKind = if unit.key {
-                    UnitKind::Keyframe
-                } else {
-                    UnitKind::Delta
-                };
-                let message: Bytes = Bytes::from(wire::frame_message(
-                    wanted.region,
-                    wanted.cursor,
-                    &unit.data,
-                ));
-                let _no_viewer_subscribed: Result<usize, broadcast::error::SendError<Unit>> =
-                    self.units.send(Unit { kind, message });
                 Ok(WAKE)
             }
         }
