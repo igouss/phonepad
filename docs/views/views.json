@@ -676,8 +676,8 @@
         },
         {
           "commands": [
-            "Pause",
-            "WriteMarker"
+            "WriteMarker",
+            "Pause"
           ],
           "from": "s_Untouched",
           "input": "CaptureStarted { manual_pause: false }",

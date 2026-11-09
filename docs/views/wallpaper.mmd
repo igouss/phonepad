@@ -2,6 +2,6 @@ stateDiagram-v2
   state "Untouched" as s_Untouched
   state "PausedByUs" as s_PausedByUs
   s_Untouched --> s_Untouched : Startup { marker_present: true } / Resume, RemoveMarker
-  s_Untouched --> s_PausedByUs : CaptureStarted { manual_pause: false } / Pause, WriteMarker
+  s_Untouched --> s_PausedByUs : CaptureStarted { manual_pause: false } / WriteMarker, Pause
   s_PausedByUs --> s_Untouched : Startup { marker_present: true } / Resume, RemoveMarker
   s_PausedByUs --> s_Untouched : CaptureStopped / Resume, RemoveMarker

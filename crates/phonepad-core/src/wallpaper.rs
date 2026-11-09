@@ -53,7 +53,7 @@ pub fn decide(
             },
         ) => Decision {
             events: vec![WallpaperEvent::Paused],
-            commands: vec![WallpaperCommand::Pause, WallpaperCommand::WriteMarker],
+            commands: vec![WallpaperCommand::WriteMarker, WallpaperCommand::Pause],
         },
         (
             Wallpaper::Untouched | Wallpaper::PausedByUs,
@@ -138,7 +138,7 @@ mod tests {
     fn paused() -> Decision<WallpaperEvent, WallpaperCommand> {
         Decision {
             events: vec![WallpaperEvent::Paused],
-            commands: vec![WallpaperCommand::Pause, WallpaperCommand::WriteMarker],
+            commands: vec![WallpaperCommand::WriteMarker, WallpaperCommand::Pause],
         }
     }
 
