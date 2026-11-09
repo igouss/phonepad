@@ -1,9 +1,35 @@
-use super::Frame;
+use std::time::Duration;
 
-pub(super) const IN_FLIGHT: usize = 4;
-const INVISIBLE_CHANGE: u8 = 2;
-const MOVING_IN_FLIGHT: usize = 2;
-const STILL_IN_FLIGHT: usize = 1;
+use phonepad_core::geometry::{Monitor, Point, Region, Size, region_around};
+
+pub(super) const MIN_ENCODE_INTERVAL: Duration = Duration::from_micros(16_667);
+const NANOS_PER_SECOND: u64 = 1_000_000_000;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Pixels {
+    pub(super) width: u32,
+    pub(super) height: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Shape {
+    pub(super) output: String,
+    pub(super) source: Pixels,
+    pub(super) view: Pixels,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Shot {
+    pub(super) crop: (u32, u32),
+    pub(super) region: Point,
+    pub(super) cursor: Point,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Target {
+    pub(super) shape: Shape,
+    pub(super) shot: Shot,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CopyMode {
@@ -12,192 +38,427 @@ pub(super) enum CopyMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct IssuePlan {
-    pub(super) count: usize,
-    pub(super) mode: CopyMode,
+pub(super) struct Offer {
+    pub(super) fourcc: u32,
+    pub(super) width: u32,
+    pub(super) height: u32,
 }
 
-pub(super) fn plan_issue(
-    region_moved: bool,
-    in_flight: usize,
-    recently_unchanged: bool,
-) -> IssuePlan {
-    match (region_moved, recently_unchanged) {
-        (true, _) => IssuePlan {
-            count: MOVING_IN_FLIGHT.saturating_sub(in_flight),
-            mode: CopyMode::Immediate,
-        },
-        (false, true) => IssuePlan {
-            count: 0,
-            mode: CopyMode::OnDamage,
-        },
-        (false, false) => IssuePlan {
-            count: STILL_IN_FLIGHT.saturating_sub(in_flight),
-            mode: CopyMode::OnDamage,
-        },
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Slot<F> {
+    Free,
+    Capturing {
+        frame: F,
+        mode: CopyMode,
+        offer: Option<Offer>,
+    },
+    Held {
+        stamp: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Schedule {
+    Idle,
+    EncodeNow,
+    WaitFor(Duration),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Pending {
+    pub(super) new_frame: bool,
+    pub(super) keyframe: bool,
+}
+
+fn pixels(size: Size) -> Pixels {
+    Pixels {
+        width: size.w.get(),
+        height: size.h.get(),
     }
 }
 
-pub(super) fn is_new_image(published: Option<&Frame>, captured: &Frame) -> bool {
-    published.is_none_or(|last: &Frame| {
-        last.origin != captured.origin
-            || last.width != captured.width
-            || last.height != captured.height
-            || last.stride != captured.stride
-            || last.order != captured.order
-            || last.y_invert != captured.y_invert
-            || (last.pixels != captured.pixels && visibly_differs(&last.pixels, &captured.pixels))
+pub(super) fn target(cursor: Point, view: Size, monitors: &[Monitor]) -> Option<Target> {
+    let region: Region = region_around(cursor, view, monitors)?;
+    let monitor: &Monitor = monitors
+        .iter()
+        .find(|m: &&Monitor| m.name == region.output)?;
+    Some(Target {
+        shape: Shape {
+            output: region.output,
+            source: pixels(monitor.size),
+            view: pixels(region.size),
+        },
+        shot: Shot {
+            crop: (
+                u32::try_from(region.local.x).ok()?,
+                u32::try_from(region.local.y).ok()?,
+            ),
+            region: region.global,
+            cursor,
+        },
     })
 }
 
-fn visibly_differs(before: &[u8], after: &[u8]) -> bool {
-    before.len() != after.len()
-        || before
-            .iter()
-            .zip(after)
-            .any(|(b, a): (&u8, &u8)| b.abs_diff(*a) > INVISIBLE_CHANGE)
+pub(super) fn copy_mode(holds_a_frame: bool) -> CopyMode {
+    if holds_a_frame {
+        CopyMode::OnDamage
+    } else {
+        CopyMode::Immediate
+    }
+}
+
+pub(super) fn held<F>(slots: &[Slot<F>]) -> Option<(usize, u64)> {
+    slots
+        .iter()
+        .enumerate()
+        .find_map(|(index, slot): (usize, &Slot<F>)| match slot {
+            Slot::Held { stamp } => Some((index, *stamp)),
+            Slot::Free | Slot::Capturing { .. } => None,
+        })
+}
+
+pub(super) fn to_issue<F>(slots: &[Slot<F>], in_flight: usize) -> Vec<usize> {
+    let capturing: usize = slots
+        .iter()
+        .filter(|slot: &&Slot<F>| match slot {
+            Slot::Capturing { .. } => true,
+            Slot::Free | Slot::Held { .. } => false,
+        })
+        .count();
+    slots
+        .iter()
+        .enumerate()
+        .filter_map(|(index, slot): (usize, &Slot<F>)| match slot {
+            Slot::Free => Some(index),
+            Slot::Capturing { .. } | Slot::Held { .. } => None,
+        })
+        .take(in_flight.saturating_sub(capturing))
+        .collect()
+}
+
+pub(super) fn arrive<F>(slots: &mut [Slot<F>], index: usize, stamp: u64) -> bool {
+    match held(slots) {
+        Some((_, held)) if held >= stamp => {
+            slots[index] = Slot::Free;
+            false
+        }
+        Some((previous, _)) => {
+            slots[previous] = Slot::Free;
+            slots[index] = Slot::Held { stamp };
+            true
+        }
+        None => {
+            slots[index] = Slot::Held { stamp };
+            true
+        }
+    }
+}
+
+pub(super) fn stamp(seconds_high: u32, seconds_low: u32, nanos: u32) -> u64 {
+    ((u64::from(seconds_high) << 32) + u64::from(seconds_low))
+        .saturating_mul(NANOS_PER_SECOND)
+        .saturating_add(u64::from(nanos))
+}
+
+pub(super) fn schedule(
+    pending: Pending,
+    shown: Option<Shot>,
+    wanted: Shot,
+    since_last: Option<Duration>,
+) -> Schedule {
+    let changed: bool = pending.new_frame || pending.keyframe || shown != Some(wanted);
+    match (changed, since_last) {
+        (false, _) => Schedule::Idle,
+        (true, None) => Schedule::EncodeNow,
+        (true, Some(elapsed)) => match MIN_ENCODE_INTERVAL.checked_sub(elapsed) {
+            Some(left) if !left.is_zero() => Schedule::WaitFor(left),
+            Some(_) | None => Schedule::EncodeNow,
+        },
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use phonepad_core::geometry::Point;
+    use std::num::NonZeroU32;
 
     use super::*;
-    use crate::capture::ChannelOrder;
-    fn frame(origin: Point, pixels: Vec<u8>) -> Frame {
-        Frame {
-            origin,
-            width: 1,
-            height: 1,
-            stride: 4,
-            order: ChannelOrder::Bgra,
-            y_invert: false,
-            pixels,
+
+    const HERE: Shot = Shot {
+        crop: (100, 200),
+        region: Point { x: 100, y: 200 },
+        cursor: Point { x: 400, y: 500 },
+    };
+    const THERE: Shot = Shot {
+        crop: (102, 200),
+        region: Point { x: 102, y: 200 },
+        cursor: Point { x: 402, y: 500 },
+    };
+    const QUIET: Pending = Pending {
+        new_frame: false,
+        keyframe: false,
+    };
+    const FRAME: Pending = Pending {
+        new_frame: true,
+        keyframe: false,
+    };
+    const KEY: Pending = Pending {
+        new_frame: false,
+        keyframe: true,
+    };
+    const LONG_AGO: Option<Duration> = Some(Duration::from_secs(1));
+
+    fn size(w: u32, h: u32) -> Size {
+        Size {
+            w: NonZeroU32::new(w).unwrap(),
+            h: NonZeroU32::new(h).unwrap(),
         }
     }
 
-    const HERE: Point = Point { x: 10, y: 20 };
-    const THERE: Point = Point { x: 11, y: 20 };
-
-    #[test]
-    fn first_capture_is_a_new_image() {
-        assert!(is_new_image(None, &frame(HERE, vec![1, 2, 3, 4])));
+    fn monitor(name: &str, x: i32, w: u32, h: u32) -> Monitor {
+        Monitor {
+            name: name.to_owned(),
+            origin: Point { x, y: 0 },
+            size: size(w, h),
+        }
     }
 
     #[test]
-    fn identical_capture_is_not_a_new_image() {
-        assert!(!is_new_image(
-            Some(&frame(HERE, vec![1, 2, 3, 4])),
-            &frame(HERE, vec![1, 2, 3, 4])
-        ));
+    fn no_monitor_has_no_target() {
+        assert_eq!(target(Point { x: 0, y: 0 }, size(640, 480), &[]), None);
     }
 
     #[test]
-    fn changed_pixels_are_a_new_image() {
-        assert!(is_new_image(
-            Some(&frame(HERE, vec![1, 2, 3, 4])),
-            &frame(HERE, vec![1, 2, 3, 9])
-        ));
-    }
-
-    #[test]
-    fn change_within_the_invisible_margin_is_not_a_new_image() {
-        assert!(!is_new_image(
-            Some(&frame(HERE, vec![10, 20, 30, 40])),
-            &frame(HERE, vec![12, 18, 30, 40])
-        ));
-    }
-
-    #[test]
-    fn change_just_beyond_the_invisible_margin_is_a_new_image() {
-        assert!(is_new_image(
-            Some(&frame(HERE, vec![10, 20, 30, 40])),
-            &frame(HERE, vec![13, 20, 30, 40])
-        ));
-    }
-
-    #[test]
-    fn moved_region_with_same_pixels_is_a_new_image() {
-        assert!(is_new_image(
-            Some(&frame(HERE, vec![1, 2, 3, 4])),
-            &frame(THERE, vec![1, 2, 3, 4])
-        ));
-    }
-
-    #[test]
-    fn moved_region_with_nothing_in_flight_issues_moving_count_immediately() {
+    fn target_on_one_monitor_crops_around_the_cursor() {
         assert_eq!(
-            plan_issue(true, 0, false),
-            IssuePlan {
-                count: MOVING_IN_FLIGHT,
-                mode: CopyMode::Immediate
-            }
+            target(
+                Point { x: 1000, y: 500 },
+                size(640, 480),
+                &[monitor("A", 0, 1920, 1080)]
+            ),
+            Some(Target {
+                shape: Shape {
+                    output: "A".to_owned(),
+                    source: Pixels {
+                        width: 1920,
+                        height: 1080
+                    },
+                    view: Pixels {
+                        width: 640,
+                        height: 480
+                    },
+                },
+                shot: Shot {
+                    crop: (680, 260),
+                    region: Point { x: 680, y: 260 },
+                    cursor: Point { x: 1000, y: 500 },
+                },
+            })
         );
     }
 
     #[test]
-    fn moved_region_tops_up_to_moving_count() {
+    fn target_on_the_second_of_many_monitors_uses_its_source_and_local_crop() {
         assert_eq!(
-            plan_issue(true, 1, false),
-            IssuePlan {
-                count: MOVING_IN_FLIGHT - 1,
-                mode: CopyMode::Immediate
-            }
+            target(
+                Point { x: 3000, y: 500 },
+                size(640, 480),
+                &[monitor("A", 0, 1920, 1080), monitor("B", 1920, 2560, 1440)]
+            ),
+            Some(Target {
+                shape: Shape {
+                    output: "B".to_owned(),
+                    source: Pixels {
+                        width: 2560,
+                        height: 1440
+                    },
+                    view: Pixels {
+                        width: 640,
+                        height: 480
+                    },
+                },
+                shot: Shot {
+                    crop: (760, 260),
+                    region: Point { x: 2680, y: 260 },
+                    cursor: Point { x: 3000, y: 500 },
+                },
+            })
         );
     }
 
     #[test]
-    fn moved_region_with_many_in_flight_issues_none() {
+    fn a_surface_with_no_frame_yet_is_copied_immediately() {
+        assert_eq!(copy_mode(false), CopyMode::Immediate);
+    }
+
+    #[test]
+    fn once_a_frame_is_held_captures_wait_for_damage() {
+        assert_eq!(copy_mode(true), CopyMode::OnDamage);
+    }
+
+    fn capturing() -> Slot<()> {
+        Slot::Capturing {
+            frame: (),
+            mode: CopyMode::OnDamage,
+            offer: None,
+        }
+    }
+
+    fn arrived(mut slots: Vec<Slot<()>>, index: usize, stamp: u64) -> (bool, Vec<Slot<()>>) {
+        let newest: bool = arrive(&mut slots, index, stamp);
+        (newest, slots)
+    }
+
+    #[test]
+    fn no_slot_held_has_no_frame() {
+        assert_eq!(held(&[Slot::Free, capturing()]), None);
+    }
+
+    #[test]
+    fn the_held_slot_carries_its_stamp() {
         assert_eq!(
-            plan_issue(true, IN_FLIGHT, false),
-            IssuePlan {
-                count: 0,
-                mode: CopyMode::Immediate
-            }
+            held(&[capturing(), Slot::Held { stamp: 7 }, Slot::Free]),
+            Some((1, 7))
         );
     }
 
     #[test]
-    fn still_region_with_nothing_in_flight_waits_for_damage_once() {
+    fn the_first_frame_is_held() {
         assert_eq!(
-            plan_issue(false, 0, false),
-            IssuePlan {
-                count: STILL_IN_FLIGHT,
-                mode: CopyMode::OnDamage
-            }
+            arrived(vec![capturing(), Slot::Free], 0, 5),
+            (true, vec![Slot::Held { stamp: 5 }, Slot::Free])
         );
     }
 
     #[test]
-    fn still_region_just_seen_unchanged_waits_before_rechecking() {
+    fn a_later_frame_replaces_the_held_one() {
         assert_eq!(
-            plan_issue(false, 0, true),
-            IssuePlan {
-                count: 0,
-                mode: CopyMode::OnDamage
-            }
+            arrived(
+                vec![Slot::Held { stamp: 5 }, capturing(), capturing()],
+                1,
+                6
+            ),
+            (true, vec![Slot::Free, Slot::Held { stamp: 6 }, capturing()])
         );
     }
 
     #[test]
-    fn moved_region_ignores_the_quiet_recheck_delay() {
+    fn a_frame_with_the_held_stamp_is_a_duplicate_and_freed() {
         assert_eq!(
-            plan_issue(true, 0, true),
-            IssuePlan {
-                count: MOVING_IN_FLIGHT,
-                mode: CopyMode::Immediate
-            }
+            arrived(vec![Slot::Held { stamp: 5 }, capturing()], 1, 5),
+            (false, vec![Slot::Held { stamp: 5 }, Slot::Free])
         );
     }
 
     #[test]
-    fn still_region_with_one_in_flight_issues_none() {
+    fn an_older_frame_is_stale_and_freed() {
         assert_eq!(
-            plan_issue(false, 1, false),
-            IssuePlan {
-                count: 0,
-                mode: CopyMode::OnDamage
-            }
+            arrived(vec![Slot::Held { stamp: 6 }, capturing()], 1, 5),
+            (false, vec![Slot::Held { stamp: 6 }, Slot::Free])
+        );
+    }
+
+    #[test]
+    fn no_free_slot_issues_nothing() {
+        assert_eq!(
+            to_issue(&[Slot::Held { stamp: 1 }, capturing()], 2),
+            Vec::<usize>::new()
+        );
+    }
+
+    #[test]
+    fn one_free_slot_below_the_limit_is_issued() {
+        assert_eq!(
+            to_issue(&[Slot::Held { stamp: 1 }, capturing(), Slot::Free], 2),
+            vec![2]
+        );
+    }
+
+    #[test]
+    fn many_free_slots_are_issued_up_to_the_limit() {
+        assert_eq!(
+            to_issue::<()>(&[Slot::Free, Slot::Free, Slot::Free], 2),
+            vec![0, 1]
+        );
+    }
+
+    #[test]
+    fn slots_already_capturing_count_against_the_limit() {
+        assert_eq!(
+            to_issue(&[capturing(), capturing(), Slot::Free], 2),
+            Vec::<usize>::new()
+        );
+    }
+
+    #[test]
+    fn stamp_joins_the_seconds_halves_and_adds_nanoseconds() {
+        assert_eq!(stamp(1, 2, 3), ((1 << 32) + 2) * NANOS_PER_SECOND + 3);
+    }
+
+    #[test]
+    fn stamp_of_zero_is_zero() {
+        assert_eq!(stamp(0, 0, 0), 0);
+    }
+
+    #[test]
+    fn nothing_new_is_not_encoded() {
+        assert_eq!(schedule(QUIET, Some(HERE), HERE, LONG_AGO), Schedule::Idle);
+    }
+
+    #[test]
+    fn nothing_shown_yet_is_encoded_at_once() {
+        assert_eq!(schedule(QUIET, None, HERE, None), Schedule::EncodeNow);
+    }
+
+    #[test]
+    fn a_new_frame_is_encoded() {
+        assert_eq!(
+            schedule(FRAME, Some(HERE), HERE, LONG_AGO),
+            Schedule::EncodeNow
+        );
+    }
+
+    #[test]
+    fn a_keyframe_request_is_encoded() {
+        assert_eq!(
+            schedule(KEY, Some(HERE), HERE, LONG_AGO),
+            Schedule::EncodeNow
+        );
+    }
+
+    #[test]
+    fn a_moved_pointer_is_encoded() {
+        assert_eq!(
+            schedule(QUIET, Some(HERE), THERE, LONG_AGO),
+            Schedule::EncodeNow
+        );
+    }
+
+    #[test]
+    fn a_change_too_soon_waits_for_the_rest_of_the_interval() {
+        assert_eq!(
+            schedule(FRAME, Some(HERE), HERE, Some(Duration::from_millis(10))),
+            Schedule::WaitFor(MIN_ENCODE_INTERVAL - Duration::from_millis(10))
+        );
+    }
+
+    #[test]
+    fn a_change_exactly_one_interval_later_is_encoded() {
+        assert_eq!(
+            schedule(FRAME, Some(HERE), HERE, Some(MIN_ENCODE_INTERVAL)),
+            Schedule::EncodeNow
+        );
+    }
+
+    #[test]
+    fn a_change_just_before_the_interval_waits() {
+        assert_eq!(
+            schedule(
+                FRAME,
+                Some(HERE),
+                HERE,
+                Some(MIN_ENCODE_INTERVAL - Duration::from_micros(1))
+            ),
+            Schedule::WaitFor(Duration::from_micros(1))
         );
     }
 }

@@ -4,30 +4,32 @@ mod desk;
 mod http;
 mod hypr;
 mod input;
-mod jpeg;
 mod owe;
 mod session;
 mod wire;
 
 use std::env;
 use std::net::Ipv4Addr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, anyhow};
 use axum::serve::ListenerExt;
-use phonepad_core::geometry::{Point, Size};
+use phonepad_core::geometry::Size;
 use phonepad_core::input::InputCommand;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{Signal, SignalKind, signal};
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
-use crate::capture::LatestFrame;
+use crate::capture::{Feed, KeyframeRequest, Unit};
 use crate::clock::Clock;
 use crate::desk::{DeskMessage, PointerStyle};
 use crate::session::SessionPorts;
 
 const BIG_POINTER: u32 = 64;
 const DEFAULT_POINTER: u32 = 24;
+const DEFAULT_RENDER_NODE: &str = "/dev/dri/renderD128";
+const UNIT_BACKLOG: usize = 8;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -42,10 +44,17 @@ async fn main() -> anyhow::Result<()> {
         input::spawn(input::open_device().context("create uinput device")?);
     let (view, view_watch): (watch::Sender<Option<Size>>, watch::Receiver<Option<Size>>) =
         watch::channel(None);
-    let (frames, frames_watch): (watch::Sender<LatestFrame>, watch::Receiver<LatestFrame>) =
-        watch::channel(None);
-    let (cursor, cursor_watch): (watch::Sender<Option<Point>>, watch::Receiver<Option<Point>>) =
-        watch::channel(None);
+    let (units, _): (broadcast::Sender<Unit>, broadcast::Receiver<Unit>) =
+        broadcast::channel(UNIT_BACKLOG);
+    let keyframe: KeyframeRequest = KeyframeRequest::default();
+    let feed: Feed = Feed {
+        render_node: env::var_os("PHONEPAD_RENDER_NODE")
+            .map_or_else(|| PathBuf::from(DEFAULT_RENDER_NODE), PathBuf::from),
+        view: view_watch,
+        cursor: watch::Sender::new(None),
+        units: units.clone(),
+        keyframe: keyframe.clone(),
+    };
     let pointer: PointerStyle = PointerStyle {
         theme: desk::pointer_theme().await,
         normal: env::var("XCURSOR_SIZE")
@@ -54,12 +63,12 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or(DEFAULT_POINTER),
         big: BIG_POINTER,
     };
-    let desk: mpsc::Sender<DeskMessage> = desk::spawn(pointer, clock, view_watch, cursor, frames);
+    let desk: mpsc::Sender<DeskMessage> = desk::spawn(pointer, clock, feed);
     let ports: SessionPorts = SessionPorts {
         desk: desk.clone(),
         input,
-        frames: frames_watch,
-        cursor: cursor_watch,
+        units,
+        keyframe,
         view,
         clock,
     };

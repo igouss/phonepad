@@ -1,25 +1,55 @@
 stateDiagram-v2
   state "Hidden" as s_Hidden
-  state "Streaming { in_flight: 0, frame_pending: false }" as s_Streaming_in_flight_0_frame_pending_false
-  state "Streaming { in_flight: 1, frame_pending: false }" as s_Streaming_in_flight_1_frame_pending_false
-  state "Streaming { in_flight: 2, frame_pending: false }" as s_Streaming_in_flight_2_frame_pending_false
-  state "Streaming { in_flight: 3, frame_pending: false }" as s_Streaming_in_flight_3_frame_pending_false
-  state "Streaming { in_flight: 4, frame_pending: false }" as s_Streaming_in_flight_4_frame_pending_false
-  state "Streaming { in_flight: 4, frame_pending: true }" as s_Streaming_in_flight_4_frame_pending_true
-  s_Hidden --> s_Streaming_in_flight_0_frame_pending_false : Visibility(true) / JoinViewers
-  s_Streaming_in_flight_0_frame_pending_false --> s_Hidden : Visibility(false) / LeaveViewers
-  s_Streaming_in_flight_0_frame_pending_false --> s_Streaming_in_flight_1_frame_pending_false : FrameReady / SendLatestFrame
-  s_Streaming_in_flight_1_frame_pending_false --> s_Hidden : Visibility(false) / LeaveViewers
-  s_Streaming_in_flight_1_frame_pending_false --> s_Streaming_in_flight_2_frame_pending_false : FrameReady / SendLatestFrame
-  s_Streaming_in_flight_1_frame_pending_false --> s_Streaming_in_flight_0_frame_pending_false : Ack
-  s_Streaming_in_flight_2_frame_pending_false --> s_Hidden : Visibility(false) / LeaveViewers
-  s_Streaming_in_flight_2_frame_pending_false --> s_Streaming_in_flight_3_frame_pending_false : FrameReady / SendLatestFrame
-  s_Streaming_in_flight_2_frame_pending_false --> s_Streaming_in_flight_1_frame_pending_false : Ack
-  s_Streaming_in_flight_3_frame_pending_false --> s_Hidden : Visibility(false) / LeaveViewers
-  s_Streaming_in_flight_3_frame_pending_false --> s_Streaming_in_flight_4_frame_pending_false : FrameReady / SendLatestFrame
-  s_Streaming_in_flight_3_frame_pending_false --> s_Streaming_in_flight_2_frame_pending_false : Ack
-  s_Streaming_in_flight_4_frame_pending_false --> s_Hidden : Visibility(false) / LeaveViewers
-  s_Streaming_in_flight_4_frame_pending_false --> s_Streaming_in_flight_4_frame_pending_true : FrameReady
-  s_Streaming_in_flight_4_frame_pending_false --> s_Streaming_in_flight_3_frame_pending_false : Ack
-  s_Streaming_in_flight_4_frame_pending_true --> s_Hidden : Visibility(false) / LeaveViewers
-  s_Streaming_in_flight_4_frame_pending_true --> s_Streaming_in_flight_4_frame_pending_false : Ack / SendLatestFrame
+  state "Unsynced { in_flight: InFlight(0) }" as s_Unsynced_in_flight_InFlight_0
+  state "Unsynced { in_flight: InFlight(1) }" as s_Unsynced_in_flight_InFlight_1
+  state "Unsynced { in_flight: InFlight(2) }" as s_Unsynced_in_flight_InFlight_2
+  state "Unsynced { in_flight: InFlight(3) }" as s_Unsynced_in_flight_InFlight_3
+  state "Unsynced { in_flight: InFlight(4) }" as s_Unsynced_in_flight_InFlight_4
+  state "Synced { in_flight: InFlight(0) }" as s_Synced_in_flight_InFlight_0
+  state "Synced { in_flight: InFlight(1) }" as s_Synced_in_flight_InFlight_1
+  state "Synced { in_flight: InFlight(2) }" as s_Synced_in_flight_InFlight_2
+  state "Synced { in_flight: InFlight(3) }" as s_Synced_in_flight_InFlight_3
+  state "Synced { in_flight: InFlight(4) }" as s_Synced_in_flight_InFlight_4
+  s_Hidden --> s_Unsynced_in_flight_InFlight_0 : Visibility(true) / JoinViewers, RequestKeyframe
+  s_Unsynced_in_flight_InFlight_0 --> s_Hidden : Visibility(false) / LeaveViewers
+  s_Unsynced_in_flight_InFlight_0 --> s_Synced_in_flight_InFlight_1 : UnitReady(Keyframe) / SendUnit
+  s_Unsynced_in_flight_InFlight_0 --> s_Unsynced_in_flight_InFlight_0 : Missed / RequestKeyframe
+  s_Unsynced_in_flight_InFlight_1 --> s_Hidden : Visibility(false) / LeaveViewers
+  s_Unsynced_in_flight_InFlight_1 --> s_Synced_in_flight_InFlight_2 : UnitReady(Keyframe) / SendUnit
+  s_Unsynced_in_flight_InFlight_1 --> s_Unsynced_in_flight_InFlight_1 : Missed / RequestKeyframe
+  s_Unsynced_in_flight_InFlight_1 --> s_Unsynced_in_flight_InFlight_0 : Ack
+  s_Unsynced_in_flight_InFlight_2 --> s_Hidden : Visibility(false) / LeaveViewers
+  s_Unsynced_in_flight_InFlight_2 --> s_Synced_in_flight_InFlight_3 : UnitReady(Keyframe) / SendUnit
+  s_Unsynced_in_flight_InFlight_2 --> s_Unsynced_in_flight_InFlight_2 : Missed / RequestKeyframe
+  s_Unsynced_in_flight_InFlight_2 --> s_Unsynced_in_flight_InFlight_1 : Ack
+  s_Unsynced_in_flight_InFlight_3 --> s_Hidden : Visibility(false) / LeaveViewers
+  s_Unsynced_in_flight_InFlight_3 --> s_Synced_in_flight_InFlight_4 : UnitReady(Keyframe) / SendUnit
+  s_Unsynced_in_flight_InFlight_3 --> s_Unsynced_in_flight_InFlight_3 : Missed / RequestKeyframe
+  s_Unsynced_in_flight_InFlight_3 --> s_Unsynced_in_flight_InFlight_2 : Ack
+  s_Unsynced_in_flight_InFlight_4 --> s_Hidden : Visibility(false) / LeaveViewers
+  s_Unsynced_in_flight_InFlight_4 --> s_Unsynced_in_flight_InFlight_4 : Missed
+  s_Unsynced_in_flight_InFlight_4 --> s_Unsynced_in_flight_InFlight_3 : Ack / RequestKeyframe
+  s_Synced_in_flight_InFlight_0 --> s_Hidden : Visibility(false) / LeaveViewers
+  s_Synced_in_flight_InFlight_0 --> s_Synced_in_flight_InFlight_1 : UnitReady(Keyframe) / SendUnit
+  s_Synced_in_flight_InFlight_0 --> s_Synced_in_flight_InFlight_1 : UnitReady(Delta) / SendUnit
+  s_Synced_in_flight_InFlight_0 --> s_Unsynced_in_flight_InFlight_0 : Missed / RequestKeyframe
+  s_Synced_in_flight_InFlight_1 --> s_Hidden : Visibility(false) / LeaveViewers
+  s_Synced_in_flight_InFlight_1 --> s_Synced_in_flight_InFlight_2 : UnitReady(Keyframe) / SendUnit
+  s_Synced_in_flight_InFlight_1 --> s_Synced_in_flight_InFlight_2 : UnitReady(Delta) / SendUnit
+  s_Synced_in_flight_InFlight_1 --> s_Unsynced_in_flight_InFlight_1 : Missed / RequestKeyframe
+  s_Synced_in_flight_InFlight_1 --> s_Synced_in_flight_InFlight_0 : Ack
+  s_Synced_in_flight_InFlight_2 --> s_Hidden : Visibility(false) / LeaveViewers
+  s_Synced_in_flight_InFlight_2 --> s_Synced_in_flight_InFlight_3 : UnitReady(Keyframe) / SendUnit
+  s_Synced_in_flight_InFlight_2 --> s_Synced_in_flight_InFlight_3 : UnitReady(Delta) / SendUnit
+  s_Synced_in_flight_InFlight_2 --> s_Unsynced_in_flight_InFlight_2 : Missed / RequestKeyframe
+  s_Synced_in_flight_InFlight_2 --> s_Synced_in_flight_InFlight_1 : Ack
+  s_Synced_in_flight_InFlight_3 --> s_Hidden : Visibility(false) / LeaveViewers
+  s_Synced_in_flight_InFlight_3 --> s_Synced_in_flight_InFlight_4 : UnitReady(Keyframe) / SendUnit
+  s_Synced_in_flight_InFlight_3 --> s_Synced_in_flight_InFlight_4 : UnitReady(Delta) / SendUnit
+  s_Synced_in_flight_InFlight_3 --> s_Unsynced_in_flight_InFlight_3 : Missed / RequestKeyframe
+  s_Synced_in_flight_InFlight_3 --> s_Synced_in_flight_InFlight_2 : Ack
+  s_Synced_in_flight_InFlight_4 --> s_Hidden : Visibility(false) / LeaveViewers
+  s_Synced_in_flight_InFlight_4 --> s_Unsynced_in_flight_InFlight_4 : UnitReady(Keyframe)
+  s_Synced_in_flight_InFlight_4 --> s_Unsynced_in_flight_InFlight_4 : UnitReady(Delta)
+  s_Synced_in_flight_InFlight_4 --> s_Unsynced_in_flight_InFlight_4 : Missed
+  s_Synced_in_flight_InFlight_4 --> s_Synced_in_flight_InFlight_3 : Ack

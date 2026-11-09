@@ -15,11 +15,11 @@
       },
       {
         "from": "c_phonepad",
-        "to": "c_jpeg_encoder_0_7_1"
+        "to": "c_phonepad_core"
       },
       {
         "from": "c_phonepad",
-        "to": "c_phonepad_core"
+        "to": "c_phonepad_h264"
       },
       {
         "from": "c_phonepad",
@@ -44,6 +44,10 @@
       {
         "from": "c_phonepad",
         "to": "c_wayland_client_0_31_15"
+      },
+      {
+        "from": "c_phonepad",
+        "to": "c_wayland_protocols_0_32_13"
       },
       {
         "from": "c_phonepad",
@@ -125,11 +129,6 @@
         "label": "ffmpeg-sys-next 9.0.1"
       },
       {
-        "id": "c_jpeg_encoder_0_7_1",
-        "kind": "external",
-        "label": "jpeg-encoder 0.7.1"
-      },
-      {
         "id": "c_rustix_1_1_6",
         "kind": "external",
         "label": "rustix 1.1.6"
@@ -158,6 +157,11 @@
         "id": "c_wayland_client_0_31_15",
         "kind": "external",
         "label": "wayland-client 0.31.15"
+      },
+      {
+        "id": "c_wayland_protocols_0_32_13",
+        "kind": "external",
+        "label": "wayland-protocols 0.32.13"
       },
       {
         "id": "c_wayland_protocols_wlr_0_3_12",
@@ -532,156 +536,369 @@
           "label": "Hidden"
         },
         {
-          "id": "s_Streaming_in_flight_0_frame_pending_false",
-          "label": "Streaming { in_flight: 0, frame_pending: false }"
+          "id": "s_Unsynced_in_flight_InFlight_0",
+          "label": "Unsynced { in_flight: InFlight(0) }"
         },
         {
-          "id": "s_Streaming_in_flight_1_frame_pending_false",
-          "label": "Streaming { in_flight: 1, frame_pending: false }"
+          "id": "s_Unsynced_in_flight_InFlight_1",
+          "label": "Unsynced { in_flight: InFlight(1) }"
         },
         {
-          "id": "s_Streaming_in_flight_2_frame_pending_false",
-          "label": "Streaming { in_flight: 2, frame_pending: false }"
+          "id": "s_Unsynced_in_flight_InFlight_2",
+          "label": "Unsynced { in_flight: InFlight(2) }"
         },
         {
-          "id": "s_Streaming_in_flight_3_frame_pending_false",
-          "label": "Streaming { in_flight: 3, frame_pending: false }"
+          "id": "s_Unsynced_in_flight_InFlight_3",
+          "label": "Unsynced { in_flight: InFlight(3) }"
         },
         {
-          "id": "s_Streaming_in_flight_4_frame_pending_false",
-          "label": "Streaming { in_flight: 4, frame_pending: false }"
+          "id": "s_Unsynced_in_flight_InFlight_4",
+          "label": "Unsynced { in_flight: InFlight(4) }"
         },
         {
-          "id": "s_Streaming_in_flight_4_frame_pending_true",
-          "label": "Streaming { in_flight: 4, frame_pending: true }"
+          "id": "s_Synced_in_flight_InFlight_0",
+          "label": "Synced { in_flight: InFlight(0) }"
+        },
+        {
+          "id": "s_Synced_in_flight_InFlight_1",
+          "label": "Synced { in_flight: InFlight(1) }"
+        },
+        {
+          "id": "s_Synced_in_flight_InFlight_2",
+          "label": "Synced { in_flight: InFlight(2) }"
+        },
+        {
+          "id": "s_Synced_in_flight_InFlight_3",
+          "label": "Synced { in_flight: InFlight(3) }"
+        },
+        {
+          "id": "s_Synced_in_flight_InFlight_4",
+          "label": "Synced { in_flight: InFlight(4) }"
         }
       ],
       "transitions": [
         {
           "commands": [
-            "JoinViewers"
+            "JoinViewers",
+            "RequestKeyframe"
           ],
           "from": "s_Hidden",
           "input": "Visibility(true)",
-          "to": "s_Streaming_in_flight_0_frame_pending_false"
+          "to": "s_Unsynced_in_flight_InFlight_0"
         },
         {
           "commands": [
             "LeaveViewers"
           ],
-          "from": "s_Streaming_in_flight_0_frame_pending_false",
+          "from": "s_Unsynced_in_flight_InFlight_0",
           "input": "Visibility(false)",
           "to": "s_Hidden"
         },
         {
           "commands": [
-            "SendLatestFrame"
+            "SendUnit"
           ],
-          "from": "s_Streaming_in_flight_0_frame_pending_false",
-          "input": "FrameReady",
-          "to": "s_Streaming_in_flight_1_frame_pending_false"
+          "from": "s_Unsynced_in_flight_InFlight_0",
+          "input": "UnitReady(Keyframe)",
+          "to": "s_Synced_in_flight_InFlight_1"
+        },
+        {
+          "commands": [
+            "RequestKeyframe"
+          ],
+          "from": "s_Unsynced_in_flight_InFlight_0",
+          "input": "Missed",
+          "to": "s_Unsynced_in_flight_InFlight_0"
         },
         {
           "commands": [
             "LeaveViewers"
           ],
-          "from": "s_Streaming_in_flight_1_frame_pending_false",
+          "from": "s_Unsynced_in_flight_InFlight_1",
           "input": "Visibility(false)",
           "to": "s_Hidden"
         },
         {
           "commands": [
-            "SendLatestFrame"
+            "SendUnit"
           ],
-          "from": "s_Streaming_in_flight_1_frame_pending_false",
-          "input": "FrameReady",
-          "to": "s_Streaming_in_flight_2_frame_pending_false"
+          "from": "s_Unsynced_in_flight_InFlight_1",
+          "input": "UnitReady(Keyframe)",
+          "to": "s_Synced_in_flight_InFlight_2"
+        },
+        {
+          "commands": [
+            "RequestKeyframe"
+          ],
+          "from": "s_Unsynced_in_flight_InFlight_1",
+          "input": "Missed",
+          "to": "s_Unsynced_in_flight_InFlight_1"
         },
         {
           "commands": [],
-          "from": "s_Streaming_in_flight_1_frame_pending_false",
+          "from": "s_Unsynced_in_flight_InFlight_1",
           "input": "Ack",
-          "to": "s_Streaming_in_flight_0_frame_pending_false"
+          "to": "s_Unsynced_in_flight_InFlight_0"
         },
         {
           "commands": [
             "LeaveViewers"
           ],
-          "from": "s_Streaming_in_flight_2_frame_pending_false",
+          "from": "s_Unsynced_in_flight_InFlight_2",
           "input": "Visibility(false)",
           "to": "s_Hidden"
         },
         {
           "commands": [
-            "SendLatestFrame"
+            "SendUnit"
           ],
-          "from": "s_Streaming_in_flight_2_frame_pending_false",
-          "input": "FrameReady",
-          "to": "s_Streaming_in_flight_3_frame_pending_false"
+          "from": "s_Unsynced_in_flight_InFlight_2",
+          "input": "UnitReady(Keyframe)",
+          "to": "s_Synced_in_flight_InFlight_3"
+        },
+        {
+          "commands": [
+            "RequestKeyframe"
+          ],
+          "from": "s_Unsynced_in_flight_InFlight_2",
+          "input": "Missed",
+          "to": "s_Unsynced_in_flight_InFlight_2"
         },
         {
           "commands": [],
-          "from": "s_Streaming_in_flight_2_frame_pending_false",
+          "from": "s_Unsynced_in_flight_InFlight_2",
           "input": "Ack",
-          "to": "s_Streaming_in_flight_1_frame_pending_false"
+          "to": "s_Unsynced_in_flight_InFlight_1"
         },
         {
           "commands": [
             "LeaveViewers"
           ],
-          "from": "s_Streaming_in_flight_3_frame_pending_false",
+          "from": "s_Unsynced_in_flight_InFlight_3",
           "input": "Visibility(false)",
           "to": "s_Hidden"
         },
         {
           "commands": [
-            "SendLatestFrame"
+            "SendUnit"
           ],
-          "from": "s_Streaming_in_flight_3_frame_pending_false",
-          "input": "FrameReady",
-          "to": "s_Streaming_in_flight_4_frame_pending_false"
+          "from": "s_Unsynced_in_flight_InFlight_3",
+          "input": "UnitReady(Keyframe)",
+          "to": "s_Synced_in_flight_InFlight_4"
+        },
+        {
+          "commands": [
+            "RequestKeyframe"
+          ],
+          "from": "s_Unsynced_in_flight_InFlight_3",
+          "input": "Missed",
+          "to": "s_Unsynced_in_flight_InFlight_3"
         },
         {
           "commands": [],
-          "from": "s_Streaming_in_flight_3_frame_pending_false",
+          "from": "s_Unsynced_in_flight_InFlight_3",
           "input": "Ack",
-          "to": "s_Streaming_in_flight_2_frame_pending_false"
+          "to": "s_Unsynced_in_flight_InFlight_2"
         },
         {
           "commands": [
             "LeaveViewers"
           ],
-          "from": "s_Streaming_in_flight_4_frame_pending_false",
+          "from": "s_Unsynced_in_flight_InFlight_4",
           "input": "Visibility(false)",
           "to": "s_Hidden"
         },
         {
           "commands": [],
-          "from": "s_Streaming_in_flight_4_frame_pending_false",
-          "input": "FrameReady",
-          "to": "s_Streaming_in_flight_4_frame_pending_true"
+          "from": "s_Unsynced_in_flight_InFlight_4",
+          "input": "Missed",
+          "to": "s_Unsynced_in_flight_InFlight_4"
         },
         {
-          "commands": [],
-          "from": "s_Streaming_in_flight_4_frame_pending_false",
+          "commands": [
+            "RequestKeyframe"
+          ],
+          "from": "s_Unsynced_in_flight_InFlight_4",
           "input": "Ack",
-          "to": "s_Streaming_in_flight_3_frame_pending_false"
+          "to": "s_Unsynced_in_flight_InFlight_3"
         },
         {
           "commands": [
             "LeaveViewers"
           ],
-          "from": "s_Streaming_in_flight_4_frame_pending_true",
+          "from": "s_Synced_in_flight_InFlight_0",
           "input": "Visibility(false)",
           "to": "s_Hidden"
         },
         {
           "commands": [
-            "SendLatestFrame"
+            "SendUnit"
           ],
-          "from": "s_Streaming_in_flight_4_frame_pending_true",
+          "from": "s_Synced_in_flight_InFlight_0",
+          "input": "UnitReady(Keyframe)",
+          "to": "s_Synced_in_flight_InFlight_1"
+        },
+        {
+          "commands": [
+            "SendUnit"
+          ],
+          "from": "s_Synced_in_flight_InFlight_0",
+          "input": "UnitReady(Delta)",
+          "to": "s_Synced_in_flight_InFlight_1"
+        },
+        {
+          "commands": [
+            "RequestKeyframe"
+          ],
+          "from": "s_Synced_in_flight_InFlight_0",
+          "input": "Missed",
+          "to": "s_Unsynced_in_flight_InFlight_0"
+        },
+        {
+          "commands": [
+            "LeaveViewers"
+          ],
+          "from": "s_Synced_in_flight_InFlight_1",
+          "input": "Visibility(false)",
+          "to": "s_Hidden"
+        },
+        {
+          "commands": [
+            "SendUnit"
+          ],
+          "from": "s_Synced_in_flight_InFlight_1",
+          "input": "UnitReady(Keyframe)",
+          "to": "s_Synced_in_flight_InFlight_2"
+        },
+        {
+          "commands": [
+            "SendUnit"
+          ],
+          "from": "s_Synced_in_flight_InFlight_1",
+          "input": "UnitReady(Delta)",
+          "to": "s_Synced_in_flight_InFlight_2"
+        },
+        {
+          "commands": [
+            "RequestKeyframe"
+          ],
+          "from": "s_Synced_in_flight_InFlight_1",
+          "input": "Missed",
+          "to": "s_Unsynced_in_flight_InFlight_1"
+        },
+        {
+          "commands": [],
+          "from": "s_Synced_in_flight_InFlight_1",
           "input": "Ack",
-          "to": "s_Streaming_in_flight_4_frame_pending_false"
+          "to": "s_Synced_in_flight_InFlight_0"
+        },
+        {
+          "commands": [
+            "LeaveViewers"
+          ],
+          "from": "s_Synced_in_flight_InFlight_2",
+          "input": "Visibility(false)",
+          "to": "s_Hidden"
+        },
+        {
+          "commands": [
+            "SendUnit"
+          ],
+          "from": "s_Synced_in_flight_InFlight_2",
+          "input": "UnitReady(Keyframe)",
+          "to": "s_Synced_in_flight_InFlight_3"
+        },
+        {
+          "commands": [
+            "SendUnit"
+          ],
+          "from": "s_Synced_in_flight_InFlight_2",
+          "input": "UnitReady(Delta)",
+          "to": "s_Synced_in_flight_InFlight_3"
+        },
+        {
+          "commands": [
+            "RequestKeyframe"
+          ],
+          "from": "s_Synced_in_flight_InFlight_2",
+          "input": "Missed",
+          "to": "s_Unsynced_in_flight_InFlight_2"
+        },
+        {
+          "commands": [],
+          "from": "s_Synced_in_flight_InFlight_2",
+          "input": "Ack",
+          "to": "s_Synced_in_flight_InFlight_1"
+        },
+        {
+          "commands": [
+            "LeaveViewers"
+          ],
+          "from": "s_Synced_in_flight_InFlight_3",
+          "input": "Visibility(false)",
+          "to": "s_Hidden"
+        },
+        {
+          "commands": [
+            "SendUnit"
+          ],
+          "from": "s_Synced_in_flight_InFlight_3",
+          "input": "UnitReady(Keyframe)",
+          "to": "s_Synced_in_flight_InFlight_4"
+        },
+        {
+          "commands": [
+            "SendUnit"
+          ],
+          "from": "s_Synced_in_flight_InFlight_3",
+          "input": "UnitReady(Delta)",
+          "to": "s_Synced_in_flight_InFlight_4"
+        },
+        {
+          "commands": [
+            "RequestKeyframe"
+          ],
+          "from": "s_Synced_in_flight_InFlight_3",
+          "input": "Missed",
+          "to": "s_Unsynced_in_flight_InFlight_3"
+        },
+        {
+          "commands": [],
+          "from": "s_Synced_in_flight_InFlight_3",
+          "input": "Ack",
+          "to": "s_Synced_in_flight_InFlight_2"
+        },
+        {
+          "commands": [
+            "LeaveViewers"
+          ],
+          "from": "s_Synced_in_flight_InFlight_4",
+          "input": "Visibility(false)",
+          "to": "s_Hidden"
+        },
+        {
+          "commands": [],
+          "from": "s_Synced_in_flight_InFlight_4",
+          "input": "UnitReady(Keyframe)",
+          "to": "s_Unsynced_in_flight_InFlight_4"
+        },
+        {
+          "commands": [],
+          "from": "s_Synced_in_flight_InFlight_4",
+          "input": "UnitReady(Delta)",
+          "to": "s_Unsynced_in_flight_InFlight_4"
+        },
+        {
+          "commands": [],
+          "from": "s_Synced_in_flight_InFlight_4",
+          "input": "Missed",
+          "to": "s_Unsynced_in_flight_InFlight_4"
+        },
+        {
+          "commands": [],
+          "from": "s_Synced_in_flight_InFlight_4",
+          "input": "Ack",
+          "to": "s_Synced_in_flight_InFlight_3"
         }
       ]
     },

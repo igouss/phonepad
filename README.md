@@ -18,15 +18,15 @@ phone (installed web app)  ──wss──▶  tailscale serve :443  ──▶  
                                                                   │
                                     uinput virtual mouse+keyboard ◀┤
                                     wtype (non-ASCII text)         ◀┤
-                                    wlr-screencopy capture thread  ──▶ JPEG frames back to the phone
+                                    wlr-screencopy + VA-API thread ──▶ H.264 access units back to the phone
 ```
 
-Two crates (see [ADR 0001](docs/adr/0001-rust-server.md)):
+Three crates (see [ADR 0001](docs/adr/0001-rust-server.md)):
 
-- `crates/phonepad-core`: the decisions, as pure functions with no dependencies. `stream` is the per-phone frame flow control (up to 4 unacknowledged frames), `desk` the viewer count and pointer size, `wallpaper` whether phonepad paused the wallpaper (recorded in `$XDG_RUNTIME_DIR/phonepad/wallpaper-paused`, so a crashed run's pause is resumed at the next start), `geometry` the capture region, `keys` the US-layout typing plan. The state machines are sum types driven by `decide` and `evolve`.
-- `crates/phonepad`: the binary. axum serves the page and the WebSocket; one actor per phone session and one desk actor own the core state machines and execute their commands; one thread owns the uinput device; a capture thread runs only while the app is visible on the phone: it takes up to two immediate `wlr-screencopy` captures while the region moves and one damage-waiting capture while it is still, and publishes a frame only when the image changed; `jpeg-encoder` encodes only those frames. A cursor sampler (60/s while the pointer moves, 20/s when still) keeps Hyprland IPC off the send path; a pointer move with no new image goes to the phone as a 16-byte header, and the page redraws its last image with the ring at the new position.
+- `crates/phonepad-core`: the decisions, as pure functions with no dependencies. `stream` is the per-phone flow control of H.264 access units (up to 4 unacknowledged; a phone that falls behind gets no delta until the next keyframe, and asks for one only once it has credit to take it), `desk` the viewer count and pointer size, `wallpaper` whether phonepad paused the wallpaper (recorded in `$XDG_RUNTIME_DIR/phonepad/wallpaper-paused`, so a crashed run's pause is resumed at the next start), `geometry` the capture region, `keys` the US-layout typing plan. The state machines are sum types driven by `decide` and `evolve`.
+- `crates/phonepad`: the binary. axum serves the page and the WebSocket; one actor per phone session and one desk actor own the core state machines and execute their commands; one thread owns the uinput device. While the app is visible on any phone, one capture thread keeps a long-lived `wlr-screencopy` capture (`copy_with_damage`) of the whole monitor under the pointer in a pool of three encoder surfaces exported as linear dmabufs, two in flight. It encodes when a new frame arrives, the pointer moves (re-cropping the latest frame on the GPU, no new capture) or a phone asks for a keyframe, at most 60 times a second. Each access unit is encoded once and broadcast to every phone; keyframe requests from all phones coalesce into one flag; a phone whose socket falls behind misses units and resyncs on a keyframe instead of slowing the others. A cursor sampler (60/s while the pointer moves, 20/s when still) keeps Hyprland IPC off the encode path. `crates/phonepad-h264` wraps FFmpeg's VA-API H.264 encoder and is the only crate allowed `unsafe` (see [ADR 0002](docs/adr/0002-h264-vaapi.md)); `PHONEPAD_RENDER_NODE` overrides the render node (default `/dev/dri/renderD128`).
 
-The page (`pad.html`, `manifest.webmanifest`, icons) is compiled into the binary, so changing it needs a rebuild.
+The page (`pad.html`, `manifest.webmanifest`, icons) decodes the stream with WebCodecs `VideoDecoder` and is compiled into the binary, so changing it needs a rebuild.
 
 ## Security model
 
@@ -71,26 +71,18 @@ After changing code or the page: `cargo build --release && systemctl --user rest
 
 ## Measurements
 
-On an Intel UHD Graphics 630 (Hyprland renders there; AQ_DRM_DEVICES selects the iGPU), 2560×1440 at 60 Hz, with a test client on the same machine:
+On an Intel UHD Graphics 630 (Hyprland renders there; AQ_DRM_DEVICES selects the iGPU), 2560×1440 at 60 Hz, a 648×1072 view, test clients on the same machine, a uinput mouse moving the pointer. CPU is % of one core, per thread from `/proc` over 5 s. A phone was streaming from a second phonepad instance on the same GPU during these runs.
 
-| Captures in flight | Capture rate |
-|---|---|
-| 1 | 20 fps |
-| 2 | 34 fps |
-| 3 | 42 fps |
-| 4 | 53 fps |
+| Clients | units/s per client | distinct frames/s | phonepad CPU | CPU per unit | Hyprland CPU |
+|---|---|---|---|---|---|
+| 1 | 23.0 | 23.0 | 1.4% | 0.61 ms | 11.6% |
+| 2 | 23.4 | 23.4 | 1.4% | 0.60 ms | 11.2% |
+| 4 | 23.2 | 23.2 | 1.4–1.8% | 0.60–0.78 ms | 11.4–12.0% |
+| 8 | 23.6 | 23.6 | 1.8% | 0.76 ms | 12.0% |
 
-Each Hyprland screencopy takes about 50 ms regardless of region size, so throughput comes from pipelining.
-
-CPU, % of one core, measured per thread from `/proc` over 5 s runs on the live service, with the wallpaper paused by phonepad:
-
-| Condition | phonepad | Hyprland | new images/s | pointer-only/s |
-|---|---|---|---|---|
-| App closed | 0.0 | 1.6–5.4 | – | – |
-| App open, pointer still | 1.2–2.8 | 3.2–3.8 | 0.1–1.9 | 0–0.1 |
-| Pointer moving, view following | 25–27 | 8.2–8.6 | 11.8–12.6 | 18–21 |
-
-With the pointer still, the remaining cost is Hyprland completing the damage-waiting capture for changes elsewhere on the screen, and the new images that real changes inside the region produce. While the pointer moves, every captured region is new, so each frame costs a capture copy, a comparison and a JPEG encode of about 5 ms.
+- Capture and encode run once for all clients, so the cost does not grow with the number of phones. A client that stops acknowledging does not change the others' rate (23.0 units/s with one stalled client of two).
+- Pointer still: phonepad 0.8%, Hyprland 4.0%.
+- The rate is bounded by the encoder waiting 10–37 ms per unit for the shared GPU; each encode runs to completion before the next starts. `cargo xtask h264-check` measures the encoder alone: about 0.2 ms of CPU per unit, worst-frame PSNR about 39 dB.
 
 ## Limitations
 

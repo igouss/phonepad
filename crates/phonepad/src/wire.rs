@@ -17,6 +17,7 @@ enum WireMessage {
     Visible { v: bool },
     View { w: u32, h: u32 },
     Ack,
+    Key,
 }
 
 #[derive(Deserialize)]
@@ -33,6 +34,7 @@ pub enum PhoneMessage {
     Visible(bool),
     View(Option<Size>),
     Ack,
+    Key,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -63,6 +65,7 @@ pub fn parse(text: &str) -> Result<PhoneMessage, WireError> {
         WireMessage::Visible { v } => PhoneMessage::Visible(v),
         WireMessage::View { w, h } => PhoneMessage::View(size(w, h)),
         WireMessage::Ack => PhoneMessage::Ack,
+        WireMessage::Key => PhoneMessage::Key,
     })
 }
 
@@ -73,11 +76,11 @@ pub fn key_code(name: &str) -> Result<u16, WireError> {
         .ok_or_else(|| WireError::UnknownKey(name.to_owned()))
 }
 
-pub fn frame_message(region: Point, cursor: Point, jpeg: &[u8]) -> Vec<u8> {
+pub fn frame_message(region: Point, cursor: Point, unit: &[u8]) -> Vec<u8> {
     [region.x, region.y, cursor.x, cursor.y]
         .iter()
         .flat_map(|value: &i32| value.to_be_bytes())
-        .chain(jpeg.iter().copied())
+        .chain(unit.iter().copied())
         .collect()
 }
 
@@ -259,6 +262,11 @@ mod tests {
     }
 
     #[test]
+    fn key_requests_a_keyframe() {
+        assert_eq!(parse(r#"{"t":"key"}"#).unwrap(), PhoneMessage::Key);
+    }
+
+    #[test]
     fn malformed_json_is_an_error() {
         assert!(matches!(
             parse(r#"{"t":"move","dx":"#),
@@ -296,11 +304,15 @@ mod tests {
     }
 
     #[test]
-    fn frame_header_is_four_big_endian_words_before_the_jpeg() {
+    fn frame_header_is_four_big_endian_words_before_the_access_unit() {
         assert_eq!(
-            frame_message(Point { x: 1, y: -2 }, Point { x: 258, y: 3 }, &[0xFF, 0xD8]),
+            frame_message(
+                Point { x: 1, y: -2 },
+                Point { x: 258, y: 3 },
+                &[0, 0, 1, 0x65]
+            ),
             vec![
-                0, 0, 0, 1, 0xFF, 0xFF, 0xFF, 0xFE, 0, 0, 1, 2, 0, 0, 0, 3, 0xFF, 0xD8
+                0, 0, 0, 1, 0xFF, 0xFF, 0xFF, 0xFE, 0, 0, 1, 2, 0, 0, 0, 3, 0, 0, 1, 0x65
             ]
         );
     }

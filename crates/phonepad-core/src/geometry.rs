@@ -77,8 +77,8 @@ pub fn region_around(cursor: Point, view: Size, monitors: &[Monitor]) -> Option<
         .find(|m: &&Monitor| m.contains(cursor))
         .unwrap_or(first);
     let size: Size = Size {
-        w: view.w.min(mon.size.w),
-        h: view.h.min(mon.size.h),
+        w: even_within(view.w, mon.size.w)?,
+        h: even_within(view.h, mon.size.h)?,
     };
     let gx: i64 = start_around(cursor.x, size.w, mon.origin.x, mon.size.w);
     let gy: i64 = start_around(cursor.y, size.h, mon.origin.y, mon.size.h);
@@ -96,6 +96,10 @@ pub fn region_around(cursor: Point, view: Size, monitors: &[Monitor]) -> Option<
         local,
         size,
     })
+}
+
+fn even_within(wanted: NonZeroU32, limit: NonZeroU32) -> Option<NonZeroU32> {
+    NonZeroU32::new(wanted.get().max(2).min(limit.get()) & !1)
 }
 
 fn start_around(c: i32, len: NonZeroU32, mon_start: i32, mon_len: NonZeroU32) -> i64 {
@@ -282,11 +286,53 @@ mod tests {
     }
 
     #[test]
-    fn region_halves_odd_width_downwards() {
+    fn odd_view_rounds_down_to_an_even_region() {
         let monitors: [Monitor; 1] = [monitor("A", 0, 0, 1920, 1080)];
         assert_eq!(
             region_around(Point { x: 1000, y: 500 }, size(641, 481), &monitors),
-            region("A", (680, 260), (680, 260), 641, 481)
+            region("A", (680, 260), (680, 260), 640, 480)
+        );
+    }
+
+    #[test]
+    fn even_view_is_kept() {
+        let monitors: [Monitor; 1] = [monitor("A", 0, 0, 1920, 1080)];
+        assert_eq!(
+            region_around(Point { x: 1000, y: 500 }, size(642, 482), &monitors),
+            region("A", (679, 259), (679, 259), 642, 482)
+        );
+    }
+
+    #[test]
+    fn view_of_one_grows_to_two() {
+        let monitors: [Monitor; 1] = [monitor("A", 0, 0, 1920, 1080)];
+        assert_eq!(
+            region_around(Point { x: 1000, y: 500 }, size(1, 1), &monitors),
+            region("A", (999, 499), (999, 499), 2, 2)
+        );
+    }
+
+    #[test]
+    fn odd_monitor_smaller_than_view_gives_an_even_region() {
+        let monitors: [Monitor; 1] = [monitor("A", 0, 0, 1921, 1281)];
+        assert_eq!(
+            region_around(Point { x: 1000, y: 500 }, size(3000, 3000), &monitors),
+            region("A", (1, 0), (1, 0), 1920, 1280)
+        );
+    }
+
+    #[test]
+    fn monitor_one_pixel_wide_gives_no_region() {
+        let monitors: [Monitor; 1] = [monitor("A", 0, 0, 1, 1080)];
+        assert_eq!(region_around(Point { x: 0, y: 500 }, VIEW, &monitors), None);
+    }
+
+    #[test]
+    fn monitor_one_pixel_high_gives_no_region() {
+        let monitors: [Monitor; 1] = [monitor("A", 0, 0, 1920, 1)];
+        assert_eq!(
+            region_around(Point { x: 1000, y: 0 }, VIEW, &monitors),
+            None
         );
     }
 

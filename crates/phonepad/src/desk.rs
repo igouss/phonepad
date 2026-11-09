@@ -2,13 +2,13 @@ use std::time::Duration;
 
 use phonepad_core::decision::Decision;
 use phonepad_core::desk::{self, Desk, DeskCommand, DeskEvent, DeskInput, PointerSize};
-use phonepad_core::geometry::{Point, Size};
+use phonepad_core::geometry::Point;
 use tokio::process::Command;
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::{self, JoinHandle};
 use tokio::time::{self, Interval, MissedTickBehavior};
 
-use crate::capture::{Capture, LatestFrame};
+use crate::capture::{Capture, Feed};
 use crate::clock::Clock;
 use crate::hypr;
 use crate::owe::WallpaperShell;
@@ -45,19 +45,11 @@ pub struct DeskShell {
     pointer: PointerStyle,
     wallpaper: WallpaperShell,
     clock: Clock,
-    view: watch::Receiver<Option<Size>>,
-    cursor: watch::Sender<Option<Point>>,
-    frames: watch::Sender<LatestFrame>,
+    feed: Feed,
     inbox: mpsc::Sender<DeskMessage>,
 }
 
-pub fn spawn(
-    pointer: PointerStyle,
-    clock: Clock,
-    view: watch::Receiver<Option<Size>>,
-    cursor: watch::Sender<Option<Point>>,
-    frames: watch::Sender<LatestFrame>,
-) -> mpsc::Sender<DeskMessage> {
+pub fn spawn(pointer: PointerStyle, clock: Clock, feed: Feed) -> mpsc::Sender<DeskMessage> {
     let (inbox, receiver): (mpsc::Sender<DeskMessage>, mpsc::Receiver<DeskMessage>) =
         mpsc::channel(QUEUE);
     let shell: DeskShell = DeskShell {
@@ -68,9 +60,7 @@ pub fn spawn(
         pointer,
         wallpaper: WallpaperShell::from_env(),
         clock,
-        view,
-        cursor,
-        frames,
+        feed,
         inbox: inbox.clone(),
     };
     tokio::spawn(shell.run(receiver));
@@ -124,9 +114,7 @@ impl DeskShell {
         let generation: u64 = self.capture_generation;
         let inbox: mpsc::Sender<DeskMessage> = self.inbox.clone();
         let capture: Capture = Capture::start(
-            self.view.clone(),
-            self.cursor.clone(),
-            self.frames.clone(),
+            self.feed.clone(),
             Box::new(move || {
                 let _ = inbox.blocking_send(DeskMessage::CaptureExited(generation));
             }),
@@ -141,7 +129,6 @@ impl DeskShell {
         if let Some(running) = self.capture.take() {
             join_bounded(running.capture).await;
         }
-        self.frames.send_replace(None);
         self.wallpaper.capture_stopped().await;
     }
 

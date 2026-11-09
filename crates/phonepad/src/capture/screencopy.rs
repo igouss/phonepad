@@ -1,26 +1,29 @@
-use std::fs::File;
 use std::io;
 use std::os::fd::AsFd;
-use std::os::unix::fs::FileExt;
-use std::sync::Arc;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
-use phonepad_core::geometry::{Monitor, Point, Region, Size, region_around};
+use axum::body::Bytes;
+use phonepad_core::geometry::{Monitor, Point, Size};
+use phonepad_core::stream::UnitKind;
+use phonepad_h264::{AccessUnit, CaptureSurface, Dmabuf, Encoder};
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
-use rustix::fs::{MemfdFlags, memfd_create};
 use rustix::io::Errno;
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 use wayland_client::backend::WaylandError;
 use wayland_client::protocol::wl_buffer::{self, WlBuffer};
-use wayland_client::protocol::wl_callback::{self, WlCallback};
 use wayland_client::protocol::wl_output::{self, WlOutput};
 use wayland_client::protocol::wl_registry::{self, WlRegistry};
-use wayland_client::protocol::wl_shm::{self, WlShm};
-use wayland_client::protocol::wl_shm_pool::{self, WlShmPool};
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, WEnum};
+use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_buffer_params_v1::{
+    self, ZwpLinuxBufferParamsV1,
+};
+use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1::{
+    self, ZwpLinuxDmabufV1,
+};
 use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_frame_v1::{
     self, ZwlrScreencopyFrameV1,
 };
@@ -28,48 +31,34 @@ use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::{
     self, ZwlrScreencopyManagerV1,
 };
 
-use crate::hypr;
+use crate::{hypr, wire};
 
-use super::format::channel_order;
-use super::plan::{CopyMode, IN_FLIGHT, IssuePlan, is_new_image, plan_issue};
-use super::{ChannelOrder, Frame, LatestFrame};
-
-const RETRY: Duration = Duration::from_millis(100);
-const QUIET_RECHECK: Duration = Duration::from_millis(100);
-const MONITORS_MAX_AGE: Duration = Duration::from_secs(1);
-const WAKE: Timespec = Timespec {
-    tv_sec: 0,
-    tv_nsec: 16_000_000,
+use super::plan::{
+    self, CopyMode, Offer, Pending, Pixels, Schedule, Shape, Shot, Slot, Target, schedule,
 };
+use super::{Feed, KeyframeRequest, Unit};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Layout {
-    format: wl_shm::Format,
-    order: ChannelOrder,
-    width: u32,
-    height: u32,
-    stride: u32,
-}
+const POOL: usize = 3;
+const IN_FLIGHT: usize = 2;
+const QP: u8 = 24;
+const LINEAR: u64 = 0;
+const RETRY: Duration = Duration::from_millis(100);
+const MONITORS_MAX_AGE: Duration = Duration::from_secs(1);
+const WAKE: Duration = Duration::from_millis(16);
 
-impl Layout {
-    fn bytes(self) -> usize {
-        self.stride as usize * self.height as usize
-    }
-}
-
-struct Buffer {
-    file: File,
-    layout: Layout,
-    pool: WlShmPool,
+struct Surface {
+    surface: CaptureSurface,
     buffer: WlBuffer,
 }
 
-struct InFlight {
-    region: Region,
-    mode: CopyMode,
-    frame: ZwlrScreencopyFrameV1,
-    layout: Option<Layout>,
-    y_invert: bool,
+struct Pool {
+    shape: Shape,
+    encoder: Encoder,
+    surfaces: Vec<Surface>,
+    slots: Vec<Slot<ZwlrScreencopyFrameV1>>,
+    new_frame: bool,
+    shown: Option<Shot>,
+    encoded_at: Option<Instant>,
 }
 
 struct NamedOutput {
@@ -78,92 +67,99 @@ struct NamedOutput {
 }
 
 struct State {
-    shm: Option<WlShm>,
+    dmabuf: Option<ZwpLinuxDmabufV1>,
     manager: Option<ZwlrScreencopyManagerV1>,
     outputs: Vec<NamedOutput>,
     view: watch::Receiver<Option<Size>>,
     cursor: watch::Receiver<Option<Point>>,
-    frames: watch::Sender<LatestFrame>,
-    buffers: [Option<Buffer>; IN_FLIGHT],
-    captures: [Option<InFlight>; IN_FLIGHT],
-    wanted: Option<Region>,
-    issued: Option<Region>,
+    units: broadcast::Sender<Unit>,
+    keyframe: KeyframeRequest,
+    target: Option<Target>,
     monitors: Vec<Monitor>,
     monitors_at: Option<Instant>,
-    published: LatestFrame,
-    unchanged_at: Option<Instant>,
-    scratch: Vec<u8>,
-    syncs: u32,
+    pool: Option<Pool>,
     failed: bool,
     fatal: Option<String>,
 }
 
-pub(super) fn run(
-    stop: &AtomicBool,
-    view: watch::Receiver<Option<Size>>,
-    cursor: watch::Receiver<Option<Point>>,
-    frames: watch::Sender<LatestFrame>,
-) -> anyhow::Result<()> {
+pub(super) fn run(stop: &AtomicBool, feed: Feed) -> anyhow::Result<()> {
     let conn: Connection = Connection::connect_to_env().context("wayland connect")?;
     let mut queue: EventQueue<State> = conn.new_event_queue();
     let qh: QueueHandle<State> = queue.handle();
     conn.display().get_registry(&qh, ());
     let mut state: State = State {
-        shm: None,
+        dmabuf: None,
         manager: None,
         outputs: Vec::new(),
-        view,
-        cursor,
-        frames,
-        buffers: [const { None }; IN_FLIGHT],
-        captures: [const { None }; IN_FLIGHT],
-        wanted: None,
-        issued: None,
+        view: feed.view,
+        cursor: feed.cursor.subscribe(),
+        units: feed.units,
+        keyframe: feed.keyframe,
+        target: None,
         monitors: Vec::new(),
         monitors_at: None,
-        published: None,
-        unchanged_at: None,
-        scratch: Vec::new(),
-        syncs: 0,
+        pool: None,
         failed: false,
         fatal: None,
     };
-    for _ in 0..2 {
-        conn.display().sync(&qh, ());
-        let target: u32 = state.syncs + 1;
-        while state.syncs < target {
-            if stop.load(Ordering::Relaxed) {
-                return Ok(());
-            }
-            wait(&mut queue, &mut state)?;
-        }
+    queue.roundtrip(&mut state).context("wayland registry")?;
+    queue
+        .roundtrip(&mut state)
+        .context("wayland output names")?;
+    if state.dmabuf.is_none() || state.manager.is_none() {
+        bail!("compositor lacks zwp_linux_dmabuf_v1 or zwlr_screencopy_manager_v1");
     }
-    if state.shm.is_none() || state.manager.is_none() {
-        bail!("compositor lacks wl_shm or zwlr_screencopy_manager_v1");
-    }
+    let mut wait_for: Duration = WAKE;
     while !stop.load(Ordering::Relaxed) {
         if let Some(fatal) = state.fatal.take() {
             bail!(fatal);
         }
         if std::mem::take(&mut state.failed) {
             thread::sleep(RETRY);
-            continue;
         }
-        state.fill(&qh);
-        wait(&mut queue, &mut state)?;
+        if let Err(err) = state.refresh_target() {
+            eprintln!("capture: {err:#}");
+        }
+        if let Some(target) = state.target.clone() {
+            if state.pool.as_ref().map(|pool: &Pool| &pool.shape) != Some(&target.shape) {
+                close(&mut queue, &mut state)?;
+                state.pool = Some(Pool::open(&feed.render_node, &target.shape, &state, &qh)?);
+            }
+            state.issue(&qh)?;
+            wait_for = state.encode_if_due(target.shot)?;
+        }
+        wait(&mut queue, &mut state, wait_for)?;
     }
+    close(&mut queue, &mut state)
+}
+
+fn close(queue: &mut EventQueue<State>, state: &mut State) -> anyhow::Result<()> {
+    let Some(pool) = state.pool.take() else {
+        return Ok(());
+    };
+    for slot in &pool.slots {
+        if let Slot::Capturing { frame, .. } = slot {
+            frame.destroy();
+        }
+    }
+    for surface in &pool.surfaces {
+        surface.buffer.destroy();
+    }
+    queue.roundtrip(state).context("release capture buffers")?;
+    drop(pool);
     Ok(())
 }
 
-fn wait(queue: &mut EventQueue<State>, state: &mut State) -> anyhow::Result<()> {
+fn wait(queue: &mut EventQueue<State>, state: &mut State, timeout: Duration) -> anyhow::Result<()> {
     queue.flush().context("wayland flush")?;
     if let Some(guard) = queue.prepare_read() {
+        let limit: Timespec = Timespec::try_from(timeout).context("poll timeout")?;
         let ready: usize = {
             let mut fds: [PollFd<'_>; 1] = [PollFd::from_borrowed_fd(
                 guard.connection_fd(),
                 PollFlags::IN,
             )];
-            match poll(&mut fds, Some(&WAKE)) {
+            match poll(&mut fds, Some(&limit)) {
                 Ok(ready) => ready,
                 Err(Errno::INTR) => 0,
                 Err(err) => return Err(err).context("poll wayland socket"),
@@ -181,56 +177,83 @@ fn wait(queue: &mut EventQueue<State>, state: &mut State) -> anyhow::Result<()> 
     Ok(())
 }
 
+fn source_size(pixels: Pixels) -> phonepad_h264::Size {
+    phonepad_h264::Size {
+        width: pixels.width,
+        height: pixels.height,
+    }
+}
+
+impl Pool {
+    fn open(
+        render_node: &Path,
+        shape: &Shape,
+        state: &State,
+        qh: &QueueHandle<State>,
+    ) -> anyhow::Result<Pool> {
+        let dmabuf: &ZwpLinuxDmabufV1 = state.dmabuf.as_ref().context("linux-dmabuf not bound")?;
+        let mut encoder: Encoder = Encoder::open(
+            render_node,
+            source_size(shape.source),
+            source_size(shape.view),
+            QP,
+        )
+        .with_context(|| format!("open the H.264 encoder for {shape:?}"))?;
+        let surfaces: Vec<Surface> = (0..POOL)
+            .map(|_| -> anyhow::Result<Surface> {
+                let surface: CaptureSurface = encoder.surface().context("encoder surface")?;
+                let buffer: WlBuffer = wl_buffer(dmabuf, surface.dmabuf(), qh)?;
+                Ok(Surface { surface, buffer })
+            })
+            .collect::<anyhow::Result<Vec<Surface>>>()?;
+        Ok(Pool {
+            shape: shape.clone(),
+            encoder,
+            surfaces,
+            slots: (0..POOL).map(|_| Slot::Free).collect(),
+            new_frame: false,
+            shown: None,
+            encoded_at: None,
+        })
+    }
+}
+
+fn wl_buffer(
+    dmabuf: &ZwpLinuxDmabufV1,
+    plane: &Dmabuf,
+    qh: &QueueHandle<State>,
+) -> anyhow::Result<WlBuffer> {
+    if plane.modifier != LINEAR {
+        bail!(
+            "encoder surface has DRM modifier {:#x}; Hyprland screencopy takes only linear dmabufs",
+            plane.modifier
+        );
+    }
+    let params: ZwpLinuxBufferParamsV1 = dmabuf.create_params(qh, ());
+    params.add(plane.fd.as_fd(), 0, plane.offset, plane.stride, 0, 0);
+    let buffer: WlBuffer = params.create_immed(
+        i32::try_from(plane.width)?,
+        i32::try_from(plane.height)?,
+        plane.fourcc,
+        zwp_linux_buffer_params_v1::Flags::empty(),
+        qh,
+        (),
+    );
+    params.destroy();
+    Ok(buffer)
+}
+
 impl State {
-    fn in_flight(&self) -> usize {
-        self.captures
-            .iter()
-            .filter(|c: &&Option<InFlight>| c.is_some())
-            .count()
-    }
-
-    fn fill(&mut self, qh: &QueueHandle<State>) {
-        if let Err(err) = self.refresh_wanted() {
-            eprintln!("capture: {err:#}");
-            return;
-        }
-        let Some(wanted) = self.wanted.clone() else {
-            return;
-        };
-        let moved: bool = self.issued.as_ref() != Some(&wanted);
-        if moved {
-            self.cancel_on_damage();
-        }
-        let recently_unchanged: bool = self
-            .unchanged_at
-            .is_some_and(|at: Instant| at.elapsed() < QUIET_RECHECK);
-        let plan: IssuePlan = plan_issue(moved, self.in_flight(), recently_unchanged);
-        let idle: Vec<usize> = (0..IN_FLIGHT)
-            .filter(|slot: &usize| self.captures[*slot].is_none())
-            .take(plan.count)
-            .collect();
-        if idle.is_empty() {
-            return;
-        }
-        match idle
-            .into_iter()
-            .try_for_each(|slot: usize| self.issue(slot, &wanted, plan.mode, qh))
-        {
-            Ok(()) => self.issued = Some(wanted),
-            Err(err) => eprintln!("capture: {err:#}"),
-        }
-    }
-
-    fn refresh_wanted(&mut self) -> anyhow::Result<()> {
+    fn refresh_target(&mut self) -> anyhow::Result<()> {
         let changed: bool =
             self.view.has_changed().unwrap_or(false) || self.cursor.has_changed().unwrap_or(false);
-        if !changed && self.wanted.is_some() {
+        if !changed && self.target.is_some() {
             return Ok(());
         }
         let view: Option<Size> = *self.view.borrow_and_update();
         let cursor: Option<Point> = *self.cursor.borrow_and_update();
         let (Some(view), Some(cursor)) = (view, cursor) else {
-            self.wanted = None;
+            self.target = None;
             return Ok(());
         };
         if self
@@ -240,134 +263,160 @@ impl State {
             self.monitors = hypr::monitors()?;
             self.monitors_at = Some(Instant::now());
         }
-        self.wanted = region_around(cursor, view, &self.monitors);
+        self.target = plan::target(cursor, view, &self.monitors);
         Ok(())
     }
 
-    fn cancel_on_damage(&mut self) {
-        for slot in 0..IN_FLIGHT {
-            if self.captures[slot]
-                .as_ref()
-                .is_some_and(|c: &InFlight| c.mode == CopyMode::OnDamage)
-                && let Some(cancelled) = self.captures[slot].take()
-            {
-                cancelled.frame.destroy();
-                if let Some(buffer) = self.buffers[slot].take() {
-                    buffer.buffer.destroy();
-                    buffer.pool.destroy();
-                }
-            }
-        }
-    }
-
-    fn issue(
-        &mut self,
-        slot: usize,
-        region: &Region,
-        mode: CopyMode,
-        qh: &QueueHandle<State>,
-    ) -> anyhow::Result<()> {
+    fn issue(&mut self, qh: &QueueHandle<State>) -> anyhow::Result<()> {
+        let Some(pool) = self.pool.as_mut() else {
+            return Ok(());
+        };
         let output: &WlOutput = &self
             .outputs
             .iter()
-            .find(|o: &&NamedOutput| o.name.as_deref() == Some(region.output.as_str()))
-            .with_context(|| format!("no wayland output named {}", region.output))?
+            .find(|o: &&NamedOutput| o.name.as_deref() == Some(pool.shape.output.as_str()))
+            .with_context(|| format!("no wayland output named {}", pool.shape.output))?
             .proxy;
         let manager: &ZwlrScreencopyManagerV1 = self
             .manager
             .as_ref()
             .context("screencopy manager not bound")?;
-        let frame: ZwlrScreencopyFrameV1 = manager.capture_output_region(
-            0,
-            output,
-            region.local.x,
-            region.local.y,
-            i32::try_from(region.size.w.get())?,
-            i32::try_from(region.size.h.get())?,
-            qh,
-            slot,
-        );
-        self.captures[slot] = Some(InFlight {
-            region: region.clone(),
-            mode,
-            frame,
-            layout: None,
-            y_invert: false,
-        });
+        let mode: CopyMode = plan::copy_mode(plan::held(&pool.slots).is_some());
+        for index in plan::to_issue(&pool.slots, IN_FLIGHT) {
+            pool.slots[index] = Slot::Capturing {
+                frame: manager.capture_output(0, output, qh, index),
+                mode,
+                offer: None,
+            };
+        }
         Ok(())
     }
 
-    fn buffer_for(
-        &mut self,
-        slot: usize,
-        layout: Layout,
-        qh: &QueueHandle<State>,
-    ) -> io::Result<WlBuffer> {
-        if let Some(existing) = &self.buffers[slot]
-            && existing.layout == layout
-        {
-            return Ok(existing.buffer.clone());
-        }
-        if let Some(old) = self.buffers[slot].take() {
-            old.buffer.destroy();
-            old.pool.destroy();
-        }
-        let bytes: i32 = i32::try_from(layout.bytes()).map_err(io::Error::other)?;
-        let file: File = File::from(memfd_create("phonepad-capture", MemfdFlags::CLOEXEC)?);
-        file.set_len(layout.bytes() as u64)?;
-        let shm: &WlShm = self
-            .shm
-            .as_ref()
-            .ok_or_else(|| io::Error::other("wl_shm not bound"))?;
-        let pool: WlShmPool = shm.create_pool(file.as_fd(), bytes, qh, ());
-        let buffer: WlBuffer = pool.create_buffer(
-            0,
-            i32::try_from(layout.width).map_err(io::Error::other)?,
-            i32::try_from(layout.height).map_err(io::Error::other)?,
-            i32::try_from(layout.stride).map_err(io::Error::other)?,
-            layout.format,
-            qh,
-            (),
-        );
-        self.buffers[slot] = Some(Buffer {
-            file,
-            layout,
-            pool,
-            buffer: buffer.clone(),
-        });
-        Ok(buffer)
-    }
-
-    fn publish(&mut self, slot: usize) -> io::Result<()> {
-        let capture: InFlight = self.captures[slot]
-            .take()
-            .ok_or_else(|| io::Error::other("no capture in flight"))?;
-        let buffer: &Buffer = self.buffers[slot]
-            .as_ref()
-            .ok_or_else(|| io::Error::other("no buffer attached"))?;
-        let layout: Layout = buffer.layout;
-        let mut pixels: Vec<u8> = std::mem::take(&mut self.scratch);
-        pixels.resize(layout.bytes(), 0);
-        buffer.file.read_exact_at(&mut pixels, 0)?;
-        let captured: Frame = Frame {
-            origin: capture.region.global,
-            width: layout.width,
-            height: layout.height,
-            stride: layout.stride,
-            order: layout.order,
-            y_invert: capture.y_invert,
-            pixels,
+    fn encode_if_due(&mut self, wanted: Shot) -> anyhow::Result<Duration> {
+        let Some(pool) = self.pool.as_mut() else {
+            return Ok(WAKE);
         };
-        if is_new_image(self.published.as_deref(), &captured) {
-            let frame: Arc<Frame> = Arc::new(captured);
-            self.published = Some(Arc::clone(&frame));
-            self.frames.send_replace(Some(frame));
-            self.unchanged_at = None;
-        } else {
-            self.scratch = captured.pixels;
-            self.unchanged_at = Some(Instant::now());
+        let Some((held, _)) = plan::held(&pool.slots) else {
+            return Ok(WAKE);
+        };
+        let pending: Pending = Pending {
+            new_frame: pool.new_frame,
+            keyframe: self.keyframe.pending(),
+        };
+        let since_last: Option<Duration> = pool.encoded_at.map(|at: Instant| at.elapsed());
+        match schedule(pending, pool.shown, wanted, since_last) {
+            Schedule::Idle => Ok(WAKE),
+            Schedule::WaitFor(left) => Ok(left.min(WAKE)),
+            Schedule::EncodeNow => {
+                let keyframe: bool = self.keyframe.take();
+                let unit: AccessUnit = pool
+                    .encoder
+                    .encode(&pool.surfaces[held].surface, wanted.crop, keyframe)
+                    .context("encode")?;
+                pool.new_frame = false;
+                pool.shown = Some(wanted);
+                pool.encoded_at = Some(Instant::now());
+                let kind: UnitKind = if unit.key {
+                    UnitKind::Keyframe
+                } else {
+                    UnitKind::Delta
+                };
+                let message: Bytes = Bytes::from(wire::frame_message(
+                    wanted.region,
+                    wanted.cursor,
+                    &unit.data,
+                ));
+                let _no_viewer_subscribed: Result<usize, broadcast::error::SendError<Unit>> =
+                    self.units.send(Unit { kind, message });
+                Ok(WAKE)
+            }
         }
-        Ok(())
+    }
+
+    fn frame_event(
+        &mut self,
+        index: usize,
+        frame: &ZwlrScreencopyFrameV1,
+        event: zwlr_screencopy_frame_v1::Event,
+    ) {
+        let Some(pool) = self.pool.as_mut() else {
+            return;
+        };
+        let (Some(surface), Some(slot)) = (pool.surfaces.get(index), pool.slots.get_mut(index))
+        else {
+            return;
+        };
+        let Slot::Capturing { mode, offer, .. } = slot else {
+            return;
+        };
+        match event {
+            zwlr_screencopy_frame_v1::Event::LinuxDmabuf {
+                format,
+                width,
+                height,
+            } => {
+                *offer = Some(Offer {
+                    fourcc: format,
+                    width,
+                    height,
+                });
+            }
+            zwlr_screencopy_frame_v1::Event::Flags {
+                flags: WEnum::Value(flags),
+            } => {
+                if flags.contains(zwlr_screencopy_frame_v1::Flags::YInvert) {
+                    self.fatal = Some(
+                        "compositor sent a y-inverted frame; phonepad would stream it upside down"
+                            .to_owned(),
+                    );
+                }
+            }
+            zwlr_screencopy_frame_v1::Event::BufferDone => {
+                let plane: &Dmabuf = surface.surface.dmabuf();
+                let fits: Offer = Offer {
+                    fourcc: plane.fourcc,
+                    width: plane.width,
+                    height: plane.height,
+                };
+                match *offer {
+                    Some(offered) if offered == fits => match mode {
+                        CopyMode::Immediate => frame.copy(&surface.buffer),
+                        CopyMode::OnDamage => frame.copy_with_damage(&surface.buffer),
+                    },
+                    Some(offered) => {
+                        self.fatal = Some(format!(
+                            "compositor offers dmabuf {offered:?} but the encoder surface is {fits:?}; scaled or rotated outputs are not supported"
+                        ));
+                    }
+                    None => {
+                        self.fatal = Some("compositor offered no dmabuf capture".to_owned());
+                    }
+                }
+            }
+            zwlr_screencopy_frame_v1::Event::Ready {
+                tv_sec_hi,
+                tv_sec_lo,
+                tv_nsec,
+            } => {
+                frame.destroy();
+                if plan::arrive(
+                    &mut pool.slots,
+                    index,
+                    plan::stamp(tv_sec_hi, tv_sec_lo, tv_nsec),
+                ) {
+                    pool.new_frame = true;
+                }
+            }
+            zwlr_screencopy_frame_v1::Event::Failed => {
+                frame.destroy();
+                *slot = Slot::Free;
+                self.failed = true;
+            }
+            zwlr_screencopy_frame_v1::Event::Buffer { .. }
+            | zwlr_screencopy_frame_v1::Event::Flags { .. }
+            | zwlr_screencopy_frame_v1::Event::Damage { .. }
+            | _ => {}
+        }
     }
 }
 
@@ -387,7 +436,6 @@ impl Dispatch<WlRegistry, ()> for State {
         } = event
         {
             match interface.as_str() {
-                "wl_shm" => state.shm = Some(registry.bind(name, 1, qh, ())),
                 "wl_output" => {
                     let index: usize = state.outputs.len();
                     let proxy: WlOutput = registry.bind(name, version.min(4), qh, index);
@@ -395,6 +443,9 @@ impl Dispatch<WlRegistry, ()> for State {
                 }
                 "zwlr_screencopy_manager_v1" => {
                     state.manager = Some(registry.bind(name, version.min(3), qh, ()))
+                }
+                "zwp_linux_dmabuf_v1" => {
+                    state.dmabuf = Some(registry.bind(name, version.min(3), qh, ()))
                 }
                 _ => {}
             }
@@ -422,109 +473,34 @@ impl Dispatch<ZwlrScreencopyFrameV1, usize> for State {
         state: &mut State,
         frame: &ZwlrScreencopyFrameV1,
         event: zwlr_screencopy_frame_v1::Event,
-        slot: &usize,
+        index: &usize,
         _: &Connection,
-        qh: &QueueHandle<State>,
+        _: &QueueHandle<State>,
     ) {
-        let slot: usize = *slot;
-        match event {
-            zwlr_screencopy_frame_v1::Event::Buffer {
-                format: WEnum::Value(format),
-                width,
-                height,
-                stride,
-            } => {
-                if let Some(capture) = state.captures[slot].as_mut()
-                    && capture.layout.is_none()
-                    && let Some(order) = channel_order(format)
-                {
-                    capture.layout = Some(Layout {
-                        format,
-                        order,
-                        width,
-                        height,
-                        stride,
-                    });
-                }
-            }
-            zwlr_screencopy_frame_v1::Event::Flags {
-                flags: WEnum::Value(flags),
-            } => {
-                if let Some(capture) = state.captures[slot].as_mut() {
-                    capture.y_invert = flags.contains(zwlr_screencopy_frame_v1::Flags::YInvert);
-                }
-            }
-            zwlr_screencopy_frame_v1::Event::BufferDone => {
-                let pending: Option<(Option<Layout>, CopyMode)> = state.captures[slot]
-                    .as_ref()
-                    .map(|c: &InFlight| (c.layout, c.mode));
-                let Some((layout, mode)) = pending else {
-                    return;
-                };
-                let Some(layout) = layout else {
-                    state.fatal = Some("compositor offered no supported shm format".to_owned());
-                    return;
-                };
-                match state.buffer_for(slot, layout, qh) {
-                    Ok(buffer) => match mode {
-                        CopyMode::Immediate => frame.copy(&buffer),
-                        CopyMode::OnDamage => frame.copy_with_damage(&buffer),
-                    },
-                    Err(err) => state.fatal = Some(format!("shm buffer: {err}")),
-                }
-            }
-            zwlr_screencopy_frame_v1::Event::Ready { .. } => {
-                frame.destroy();
-                if let Err(err) = state.publish(slot) {
-                    state.fatal = Some(format!("read frame: {err}"));
-                }
-            }
-            zwlr_screencopy_frame_v1::Event::Failed => {
-                frame.destroy();
-                state.captures[slot] = None;
-                state.failed = true;
-            }
-            zwlr_screencopy_frame_v1::Event::Buffer { .. }
-            | zwlr_screencopy_frame_v1::Event::Flags { .. }
-            | zwlr_screencopy_frame_v1::Event::Damage { .. }
-            | zwlr_screencopy_frame_v1::Event::LinuxDmabuf { .. }
-            | _ => {}
-        }
+        state.frame_event(*index, frame, event);
     }
 }
 
-impl Dispatch<WlCallback, ()> for State {
+impl Dispatch<ZwpLinuxBufferParamsV1, ()> for State {
     fn event(
         state: &mut State,
-        _: &WlCallback,
-        event: wl_callback::Event,
+        _: &ZwpLinuxBufferParamsV1,
+        event: zwp_linux_buffer_params_v1::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<State>,
     ) {
-        if let wl_callback::Event::Done { .. } = event {
-            state.syncs += 1;
+        if let zwp_linux_buffer_params_v1::Event::Failed = event {
+            state.fatal = Some("compositor rejected the encoder surface as a dmabuf".to_owned());
         }
     }
 }
 
-impl Dispatch<WlShm, ()> for State {
+impl Dispatch<ZwpLinuxDmabufV1, ()> for State {
     fn event(
         _: &mut State,
-        _: &WlShm,
-        _: wl_shm::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<State>,
-    ) {
-    }
-}
-
-impl Dispatch<WlShmPool, ()> for State {
-    fn event(
-        _: &mut State,
-        _: &WlShmPool,
-        _: wl_shm_pool::Event,
+        _: &ZwpLinuxDmabufV1,
+        _: zwp_linux_dmabuf_v1::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<State>,

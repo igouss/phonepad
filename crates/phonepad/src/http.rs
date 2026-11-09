@@ -88,10 +88,11 @@ mod tests {
     use axum::body::Body;
     use axum::http::HeaderValue;
     use phonepad_core::input::InputCommand;
-    use tokio::sync::{mpsc, watch};
+    use tokio::sync::{broadcast, mpsc, watch};
     use tower::ServiceExt;
 
     use super::*;
+    use crate::capture::{KeyframeRequest, Unit};
     use crate::clock::Clock;
     use crate::desk::DeskMessage;
 
@@ -107,13 +108,13 @@ mod tests {
         let (desk, _): (mpsc::Sender<DeskMessage>, _) = mpsc::channel(1);
         let (input, _): (mpsc::Sender<InputCommand>, _) = mpsc::channel(1);
         let (view, _) = watch::channel(None);
-        let (_, frames) = watch::channel(None);
-        let (_, cursor) = watch::channel(None);
+        let (units, _): (broadcast::Sender<Unit>, broadcast::Receiver<Unit>) =
+            broadcast::channel(1);
         let ports: SessionPorts = SessionPorts {
             desk,
             input,
-            frames,
-            cursor,
+            units,
+            keyframe: KeyframeRequest::default(),
             view,
             clock: Clock::start(),
         };

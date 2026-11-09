@@ -1,36 +1,51 @@
 mod cursor;
-mod format;
 mod plan;
 mod screencopy;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
+use axum::body::Bytes;
 use phonepad_core::geometry::{Point, Size};
-use tokio::sync::watch;
+use phonepad_core::stream::UnitKind;
+use tokio::sync::{broadcast, watch};
 
 use self::cursor::sample_cursor;
 use self::screencopy::run;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ChannelOrder {
-    Bgra,
-    Rgba,
+#[derive(Clone, Debug)]
+pub struct Unit {
+    pub kind: UnitKind,
+    pub message: Bytes,
 }
 
-#[derive(Debug)]
-pub struct Frame {
-    pub origin: Point,
-    pub width: u32,
-    pub height: u32,
-    pub stride: u32,
-    pub order: ChannelOrder,
-    pub y_invert: bool,
-    pub pixels: Vec<u8>,
+#[derive(Clone, Debug, Default)]
+pub struct KeyframeRequest(Arc<AtomicBool>);
+
+impl KeyframeRequest {
+    pub fn request(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    fn pending(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    fn take(&self) -> bool {
+        self.0.swap(false, Ordering::Relaxed)
+    }
 }
 
-pub type LatestFrame = Option<Arc<Frame>>;
+#[derive(Clone)]
+pub struct Feed {
+    pub render_node: PathBuf,
+    pub view: watch::Receiver<Option<Size>>,
+    pub cursor: watch::Sender<Option<Point>>,
+    pub units: broadcast::Sender<Unit>,
+    pub keyframe: KeyframeRequest,
+}
 
 pub struct Capture {
     stop: Arc<AtomicBool>,
@@ -49,20 +64,15 @@ impl Drop for ExitNotice {
 }
 
 impl Capture {
-    pub fn start(
-        view: watch::Receiver<Option<Size>>,
-        cursor: watch::Sender<Option<Point>>,
-        frames: watch::Sender<LatestFrame>,
-        on_exit: Box<dyn FnOnce() + Send>,
-    ) -> Capture {
+    pub fn start(feed: Feed, on_exit: Box<dyn FnOnce() + Send>) -> Capture {
         let stop: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         let stopped: Arc<AtomicBool> = Arc::clone(&stop);
         let sampling: Arc<AtomicBool> = Arc::clone(&stop);
-        let cursor_seen: watch::Receiver<Option<Point>> = cursor.subscribe();
+        let cursor: watch::Sender<Option<Point>> = feed.cursor.clone();
         let sampler: JoinHandle<()> = thread::spawn(move || sample_cursor(&sampling, &cursor));
         let thread: JoinHandle<()> = thread::spawn(move || {
             let _notice: ExitNotice = ExitNotice(Some(on_exit));
-            if let Err(err) = run(&stopped, view, cursor_seen, frames) {
+            if let Err(err) = run(&stopped, feed) {
                 eprintln!("capture: {err:#}");
             }
         });
@@ -76,5 +86,41 @@ impl Capture {
     pub fn stop(self) -> [JoinHandle<()>; 2] {
         self.stop.store(true, Ordering::Relaxed);
         [self.thread, self.sampler]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::KeyframeRequest;
+
+    #[test]
+    fn no_request_is_not_pending_and_takes_nothing() {
+        let keyframe: KeyframeRequest = KeyframeRequest::default();
+        assert_eq!([keyframe.pending(), keyframe.take()], [false, false]);
+    }
+
+    #[test]
+    fn one_request_is_pending_until_taken_once() {
+        let keyframe: KeyframeRequest = KeyframeRequest::default();
+        keyframe.request();
+        assert_eq!(
+            [
+                keyframe.pending(),
+                keyframe.take(),
+                keyframe.pending(),
+                keyframe.take()
+            ],
+            [true, true, false, false]
+        );
+    }
+
+    #[test]
+    fn many_requests_from_many_viewers_coalesce_into_one_keyframe() {
+        let keyframe: KeyframeRequest = KeyframeRequest::default();
+        let other_viewer: KeyframeRequest = keyframe.clone();
+        keyframe.request();
+        other_viewer.request();
+        keyframe.request();
+        assert_eq!([keyframe.take(), keyframe.take()], [true, false]);
     }
 }

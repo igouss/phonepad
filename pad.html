@@ -56,9 +56,9 @@ let ws = null;
 function connect() {
   ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   ws.binaryType = "arraybuffer";
-  ws.onopen = () => { status.textContent = "connected"; sendView(); sendVisible(); };
+  ws.onopen = () => { status.textContent = "connected"; restart(); sendView(); sendVisible(); };
   ws.onclose = () => { status.textContent = "disconnected"; setTimeout(connect, 1000); };
-  ws.onmessage = ev => { if (ev.data instanceof ArrayBuffer) drawFrame(ev.data); };
+  ws.onmessage = ev => { if (ev.data instanceof ArrayBuffer) onUnit(ev.data); };
 }
 const send = m => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); };
 function sendVisible() { send({ t: "visible", v: document.visibilityState === "visible" }); }
@@ -68,31 +68,76 @@ function sendView() {
   view.height = Math.round(r.height * devicePixelRatio);
   send({ t: "view", w: Math.round(r.width * zoom), h: Math.round(r.height * zoom) });
 }
-let shown = null;
-function paint(img, rx, ry, cx, cy) {
+let decoder = null, spsId = null, needKey = true, stamp = 0, accel = "prefer-hardware", decoded = false;
+const heads = [];
+const ack = () => send({ t: "ack" });
+const hex = n => n.toString(16).padStart(2, "0");
+function nals(b) {
+  const out = [];
+  let i = 0, start = -1;
+  const close = end => { while (end > start && b[end - 1] === 0) end--; out.push(b.subarray(start, end)); };
+  while (i + 2 < b.length) {
+    if (b[i] === 0 && b[i + 1] === 0 && b[i + 2] === 1) { if (start >= 0) close(i); i += 3; start = i; }
+    else i++;
+  }
+  if (start >= 0) close(b.length);
+  return out;
+}
+function paint(img, w, h, rx, ry, cx, cy) {
   const W = view.width, H = view.height;
-  const s = Math.min(W / img.width, H / img.height);
-  const ox = (W - img.width * s) / 2, oy = (H - img.height * s) / 2;
+  const s = Math.min(W / w, H / h);
+  const ox = (W - w * s) / 2, oy = (H - h * s) / 2;
   ctx.fillStyle = "#1b1b1b"; ctx.fillRect(0, 0, W, H);
-  ctx.drawImage(img, ox, oy, img.width * s, img.height * s);
+  ctx.drawImage(img, ox, oy, w * s, h * s);
   const px = ox + (cx - rx) * s, py = oy + (cy - ry) * s, rad = 14 * devicePixelRatio;
   ctx.lineWidth = 5 * devicePixelRatio; ctx.strokeStyle = "rgba(0,0,0,.7)";
   ctx.beginPath(); ctx.arc(px, py, rad, 0, 2 * Math.PI); ctx.stroke();
   ctx.lineWidth = 2.5 * devicePixelRatio; ctx.strokeStyle = "#3d6";
   ctx.beginPath(); ctx.arc(px, py, rad, 0, 2 * Math.PI); ctx.stroke();
 }
-async function drawFrame(buf) {
-  const h = new DataView(buf, 0, 16);
-  const rx = h.getInt32(0), ry = h.getInt32(4), cx = h.getInt32(8), cy = h.getInt32(12);
+function output(frame) {
+  decoded = true;
   try {
-    if (buf.byteLength > 16) {
-      const img = await createImageBitmap(new Blob([buf.slice(16)], { type: "image/jpeg" }));
-      if (shown) shown.close();
-      shown = img;
-    }
-    if (shown) paint(shown, rx, ry, cx, cy);
+    let head = null;
+    while (heads.length && heads[0].ts <= frame.timestamp) { head = heads.shift(); ack(); }
+    if (head) paint(frame, frame.displayWidth, frame.displayHeight, head.rx, head.ry, head.cx, head.cy);
   } finally {
-    send({ t: "ack" });
+    frame.close();
+  }
+}
+function restart() {
+  heads.length = 0; spsId = null; needKey = true;
+  if (decoder && decoder.state !== "closed") decoder.reset(); else decoder = null;
+}
+function fail() {
+  if (!decoded) accel = "no-preference";
+  while (heads.length) { heads.shift(); ack(); }
+  restart();
+  send({ t: "key" });
+}
+function configure(sps, id) {
+  while (heads.length) { heads.shift(); ack(); }
+  if (!decoder || decoder.state === "closed") decoder = new VideoDecoder({ output, error: fail });
+  else decoder.reset();
+  decoder.configure({ codec: "avc1." + hex(sps[1]) + hex(sps[2]) + hex(sps[3]), optimizeForLatency: true, hardwareAcceleration: accel });
+  spsId = id; needKey = true; decoded = false;
+}
+function onUnit(buf) {
+  const h = new DataView(buf, 0, 16);
+  const head = { rx: h.getInt32(0), ry: h.getInt32(4), cx: h.getInt32(8), cy: h.getInt32(12), ts: stamp };
+  const au = new Uint8Array(buf, 16);
+  const units = nals(au);
+  const key = units.some(n => (n[0] & 31) === 5);
+  const sps = units.find(n => (n[0] & 31) === 7);
+  try {
+    if (key && sps && sps.length > 3) { const id = Array.from(sps, hex).join(""); if (id !== spsId) configure(sps, id); }
+    if (!units.length || !decoder || decoder.state !== "configured" || (needKey && !key)) { ack(); return; }
+    needKey = false;
+    heads.push(head);
+    decoder.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: stamp++, data: au }));
+  } catch (_) {
+    if (!heads.includes(head)) ack();
+    fail();
   }
 }
 function showZoom() { zoombtn.textContent = zoom + "×"; }

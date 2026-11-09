@@ -8,14 +8,15 @@ publish.workspace = true
 anyhow = "1.0.104"
 axum = { version = "0.8.9", features = ["ws"] }
 evdev = "0.13.2"
-jpeg-encoder = { version = "0.7.1", features = ["simd"] }
 phonepad-core = { path = "../phonepad-core" }
-rustix = { version = "1.1.6", features = ["event", "fs"] }
+phonepad-h264 = { path = "../phonepad-h264" }
+rustix = { version = "1.1.6", features = ["event"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 thiserror = "2.0.17"
 tokio = { version = "1.54.1", features = ["macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 wayland-client = "0.31.15"
+wayland-protocols = { version = "0.32.13", features = ["client"] }
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
 
 [dev-dependencies]
