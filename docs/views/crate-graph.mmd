@@ -1,0 +1,15 @@
+flowchart LR
+  classDef workspace fill:#2b6cb0,stroke:#1a365d,color:#ffffff
+  classDef external fill:#edf2f7,stroke:#a0aec0,color:#1a202c
+  c_phonepad_capture["phonepad-capture"]:::workspace
+  c_phonepad_core["phonepad-core"]:::workspace
+  c_xtask["xtask"]:::workspace
+  c_rustix_1_1_6["rustix 1.1.6"]:::external
+  c_serde_json_1_0_154["serde_json 1.0.154"]:::external
+  c_wayland_client_0_31_15["wayland-client 0.31.15"]:::external
+  c_wayland_protocols_wlr_0_3_12["wayland-protocols-wlr 0.3.12"]:::external
+  c_phonepad_capture --> c_rustix_1_1_6
+  c_phonepad_capture --> c_wayland_client_0_31_15
+  c_phonepad_capture --> c_wayland_protocols_wlr_0_3_12
+  c_xtask --> c_phonepad_core
+  c_xtask --> c_serde_json_1_0_154

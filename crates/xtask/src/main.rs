@@ -1,0 +1,196 @@
+mod gates;
+mod lexer;
+mod machine;
+mod mermaid;
+mod profile;
+mod views;
+mod workspace;
+
+use gates::Verdict;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+use views::VIEWS_DIR;
+
+const USAGE: &str = "usage: cargo xtask views [--root <dir>] [--out <dir>]\n       cargo xtask check [--root <dir>]\n       target/debug/xtask profile <pid> <seconds> [--root <dir>]\n         (run the binary directly: a cargo runner with its own PID namespace hides host processes)";
+
+#[derive(Debug, PartialEq, Eq)]
+enum Task {
+    Views {
+        root: Option<PathBuf>,
+        out: Option<PathBuf>,
+    },
+    Check {
+        root: Option<PathBuf>,
+    },
+    Profile {
+        root: Option<PathBuf>,
+        pid: u32,
+        seconds: u32,
+    },
+}
+
+struct Args {
+    positional: Vec<String>,
+    root: Option<PathBuf>,
+    out: Option<PathBuf>,
+}
+
+fn split(args: &[String]) -> Result<Args, String> {
+    let mut parsed: Args = Args {
+        positional: Vec::new(),
+        root: None,
+        out: None,
+    };
+    let mut rest: std::slice::Iter<String> = args.iter();
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            "--root" => {
+                parsed.root = Some(PathBuf::from(
+                    rest.next().ok_or("--root needs a directory")?,
+                ))
+            }
+            "--out" => {
+                parsed.out = Some(PathBuf::from(rest.next().ok_or("--out needs a directory")?))
+            }
+            flag if flag.starts_with("--") => return Err(format!("unknown option {flag}")),
+            word => parsed.positional.push(word.to_string()),
+        }
+    }
+    Ok(parsed)
+}
+
+fn number(text: &str, what: &str) -> Result<u32, String> {
+    text.parse()
+        .map_err(|_| format!("{what} must be a non-negative integer, got `{text}`"))
+}
+
+fn parse(args: &[String]) -> Result<Task, String> {
+    let Args {
+        positional,
+        root,
+        out,
+    } = split(args)?;
+    let words: Vec<&str> = positional.iter().map(String::as_str).collect();
+    match (words.as_slice(), out) {
+        (["views"], out) => Ok(Task::Views { root, out }),
+        (["check"], None) => Ok(Task::Check { root }),
+        (["profile", pid, seconds], None) => Ok(Task::Profile {
+            root,
+            pid: number(pid, "pid")?,
+            seconds: number(seconds, "seconds")?,
+        }),
+        _ => Err(String::from(USAGE)),
+    }
+}
+
+fn root_or_own(root: Option<PathBuf>) -> Result<PathBuf, String> {
+    match root {
+        Some(root) => views::canonical(&root),
+        None => views::own_root(),
+    }
+}
+
+fn check(root: &Path) -> bool {
+    let verdicts: Vec<(&str, Verdict)> = gates::all(root);
+    for (gate, verdict) in &verdicts {
+        match verdict {
+            Verdict::Pass => println!("PASS {gate}"),
+            Verdict::Fail(findings) => {
+                println!("FAIL {gate}");
+                findings.iter().for_each(|f| println!("  {f}"));
+            }
+        }
+    }
+    verdicts.iter().all(|(_, v)| *v == Verdict::Pass)
+}
+
+fn run(task: Task) -> Result<bool, String> {
+    match task {
+        Task::Views { root, out } => {
+            let root: PathBuf = root_or_own(root)?;
+            let out: PathBuf = out.unwrap_or_else(|| root.join(VIEWS_DIR));
+            views::regenerate(&root, &out)?;
+            println!("views written to {}", out.display());
+            Ok(true)
+        }
+        Task::Check { root } => Ok(check(&root_or_own(root)?)),
+        Task::Profile { root, pid, seconds } => {
+            let written: PathBuf = profile::profile(&root_or_own(root)?, pid, seconds)?;
+            println!("hot path written to {}", written.display());
+            Ok(true)
+        }
+    }
+}
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match parse(&args).and_then(run) {
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => ExitCode::FAILURE,
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Task, parse};
+    use std::path::PathBuf;
+
+    fn args(text: &str) -> Vec<String> {
+        text.split_whitespace().map(str::to_string).collect()
+    }
+
+    #[test]
+    fn no_arguments_is_a_usage_error() {
+        assert!(parse(&[]).is_err());
+    }
+
+    #[test]
+    fn check_takes_a_root() {
+        assert_eq!(
+            parse(&args("check --root /w")),
+            Ok(Task::Check {
+                root: Some(PathBuf::from("/w"))
+            })
+        );
+    }
+
+    #[test]
+    fn views_takes_a_root_and_an_output() {
+        assert_eq!(
+            parse(&args("views --out /o --root /w")),
+            Ok(Task::Views {
+                root: Some(PathBuf::from("/w")),
+                out: Some(PathBuf::from("/o"))
+            })
+        );
+    }
+
+    #[test]
+    fn profile_takes_pid_and_seconds() {
+        assert_eq!(
+            parse(&args("profile 42 5")),
+            Ok(Task::Profile {
+                root: None,
+                pid: 42,
+                seconds: 5
+            })
+        );
+    }
+
+    #[test]
+    fn profile_rejects_a_non_numeric_pid() {
+        assert!(parse(&args("profile me 5")).is_err());
+    }
+
+    #[test]
+    fn unknown_options_are_rejected() {
+        assert_eq!(
+            parse(&args("check --fast")),
+            Err(String::from("unknown option --fast"))
+        );
+    }
+}

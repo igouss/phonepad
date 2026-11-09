@@ -1,0 +1,586 @@
+{
+  "crates": {
+    "edges": [
+      {
+        "from": "c_phonepad_capture",
+        "to": "c_rustix_1_1_6"
+      },
+      {
+        "from": "c_phonepad_capture",
+        "to": "c_wayland_client_0_31_15"
+      },
+      {
+        "from": "c_phonepad_capture",
+        "to": "c_wayland_protocols_wlr_0_3_12"
+      },
+      {
+        "from": "c_xtask",
+        "to": "c_phonepad_core"
+      },
+      {
+        "from": "c_xtask",
+        "to": "c_serde_json_1_0_154"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "c_phonepad_capture",
+        "kind": "workspace",
+        "label": "phonepad-capture",
+        "manifest": "crates/phonepad-capture/Cargo.toml"
+      },
+      {
+        "id": "c_phonepad_core",
+        "kind": "workspace",
+        "label": "phonepad-core",
+        "manifest": "crates/phonepad-core/Cargo.toml"
+      },
+      {
+        "id": "c_xtask",
+        "kind": "workspace",
+        "label": "xtask",
+        "manifest": "crates/xtask/Cargo.toml"
+      },
+      {
+        "id": "c_rustix_1_1_6",
+        "kind": "external",
+        "label": "rustix 1.1.6"
+      },
+      {
+        "id": "c_serde_json_1_0_154",
+        "kind": "external",
+        "label": "serde_json 1.0.154"
+      },
+      {
+        "id": "c_wayland_client_0_31_15",
+        "kind": "external",
+        "label": "wayland-client 0.31.15"
+      },
+      {
+        "id": "c_wayland_protocols_wlr_0_3_12",
+        "kind": "external",
+        "label": "wayland-protocols-wlr 0.3.12"
+      }
+    ]
+  },
+  "machines": {
+    "desk": {
+      "states": [
+        {
+          "id": "s_Desk_viewers_0_pointer_Normal",
+          "label": "Desk { viewers: 0, pointer: Normal }"
+        },
+        {
+          "id": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "label": "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1000, last_seen: None } }"
+        },
+        {
+          "id": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
+          "label": "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 0, y: 0 }) } }"
+        },
+        {
+          "id": "s_Desk_viewers_1_pointer_Normal",
+          "label": "Desk { viewers: 1, pointer: Normal }"
+        },
+        {
+          "id": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "label": "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1000, last_seen: None } }"
+        },
+        {
+          "id": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
+          "label": "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 0, y: 0 }) } }"
+        },
+        {
+          "id": "s_Desk_viewers_2_pointer_Normal",
+          "label": "Desk { viewers: 2, pointer: Normal }"
+        },
+        {
+          "id": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "label": "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1000, last_seen: None } }"
+        },
+        {
+          "id": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
+          "label": "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 0, y: 0 }) } }"
+        },
+        {
+          "id": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100_last_seen_None",
+          "label": "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1100, last_seen: None } }"
+        },
+        {
+          "id": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0",
+          "label": "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 5, y: 0 }) } }"
+        },
+        {
+          "id": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100_last_seen_Some_Point_x_0_y_0",
+          "label": "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1100, last_seen: Some(Point { x: 0, y: 0 }) } }"
+        },
+        {
+          "id": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100_last_seen_None",
+          "label": "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1100, last_seen: None } }"
+        },
+        {
+          "id": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0",
+          "label": "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 5, y: 0 }) } }"
+        },
+        {
+          "id": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100_last_seen_Some_Point_x_0_y_0",
+          "label": "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1100, last_seen: Some(Point { x: 0, y: 0 }) } }"
+        },
+        {
+          "id": "s_Desk_viewers_3_pointer_Normal",
+          "label": "Desk { viewers: 3, pointer: Normal }"
+        },
+        {
+          "id": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100_last_seen_None",
+          "label": "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1100, last_seen: None } }"
+        },
+        {
+          "id": "s_Desk_viewers_3_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "label": "Desk { viewers: 3, pointer: Big { last_phone_input_ms: 1000, last_seen: None } }"
+        },
+        {
+          "id": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0",
+          "label": "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 5, y: 0 }) } }"
+        },
+        {
+          "id": "s_Desk_viewers_3_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
+          "label": "Desk { viewers: 3, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 0, y: 0 }) } }"
+        },
+        {
+          "id": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100_last_seen_Some_Point_x_0_y_0",
+          "label": "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1100, last_seen: Some(Point { x: 0, y: 0 }) } }"
+        }
+      ],
+      "transitions": [
+        {
+          "commands": [
+            "StartCapture"
+          ],
+          "from": "s_Desk_viewers_0_pointer_Normal",
+          "input": "ViewerJoined",
+          "to": "s_Desk_viewers_1_pointer_Normal"
+        },
+        {
+          "commands": [
+            "SetPointer(Big)",
+            "StartLocalMouseWatch"
+          ],
+          "from": "s_Desk_viewers_0_pointer_Normal",
+          "input": "PhoneInput { at_ms: 1100 }",
+          "to": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100_last_seen_None"
+        },
+        {
+          "commands": [
+            "StartCapture"
+          ],
+          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "input": "ViewerJoined",
+          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "input": "PhoneInput { at_ms: 1100 }",
+          "to": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100_last_seen_None"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "input": "CursorSampled { at: Point { x: 0, y: 0 }, at_ms: 1100 }",
+          "to": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1100 }",
+          "to": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1400 }",
+          "to": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0"
+        },
+        {
+          "commands": [
+            "StartCapture"
+          ],
+          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
+          "input": "ViewerJoined",
+          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
+          "input": "PhoneInput { at_ms: 1100 }",
+          "to": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100_last_seen_Some_Point_x_0_y_0"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
+          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1100 }",
+          "to": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0"
+        },
+        {
+          "commands": [
+            "SetPointer(Normal)",
+            "StopLocalMouseWatch"
+          ],
+          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
+          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1400 }",
+          "to": "s_Desk_viewers_0_pointer_Normal"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_1_pointer_Normal",
+          "input": "ViewerJoined",
+          "to": "s_Desk_viewers_2_pointer_Normal"
+        },
+        {
+          "commands": [
+            "StopCapture"
+          ],
+          "from": "s_Desk_viewers_1_pointer_Normal",
+          "input": "ViewerLeft",
+          "to": "s_Desk_viewers_0_pointer_Normal"
+        },
+        {
+          "commands": [
+            "SetPointer(Big)",
+            "StartLocalMouseWatch"
+          ],
+          "from": "s_Desk_viewers_1_pointer_Normal",
+          "input": "PhoneInput { at_ms: 1100 }",
+          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100_last_seen_None"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "input": "ViewerJoined",
+          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None"
+        },
+        {
+          "commands": [
+            "StopCapture",
+            "SetPointer(Normal)",
+            "StopLocalMouseWatch"
+          ],
+          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "input": "ViewerLeft",
+          "to": "s_Desk_viewers_0_pointer_Normal"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "input": "PhoneInput { at_ms: 1100 }",
+          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100_last_seen_None"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "input": "CursorSampled { at: Point { x: 0, y: 0 }, at_ms: 1100 }",
+          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1100 }",
+          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1400 }",
+          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
+          "input": "ViewerJoined",
+          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0"
+        },
+        {
+          "commands": [
+            "StopCapture",
+            "SetPointer(Normal)",
+            "StopLocalMouseWatch"
+          ],
+          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
+          "input": "ViewerLeft",
+          "to": "s_Desk_viewers_0_pointer_Normal"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
+          "input": "PhoneInput { at_ms: 1100 }",
+          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100_last_seen_Some_Point_x_0_y_0"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
+          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1100 }",
+          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0"
+        },
+        {
+          "commands": [
+            "SetPointer(Normal)",
+            "StopLocalMouseWatch"
+          ],
+          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
+          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1400 }",
+          "to": "s_Desk_viewers_1_pointer_Normal"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_2_pointer_Normal",
+          "input": "ViewerJoined",
+          "to": "s_Desk_viewers_3_pointer_Normal"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_2_pointer_Normal",
+          "input": "ViewerLeft",
+          "to": "s_Desk_viewers_1_pointer_Normal"
+        },
+        {
+          "commands": [
+            "SetPointer(Big)",
+            "StartLocalMouseWatch"
+          ],
+          "from": "s_Desk_viewers_2_pointer_Normal",
+          "input": "PhoneInput { at_ms: 1100 }",
+          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100_last_seen_None"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "input": "ViewerJoined",
+          "to": "s_Desk_viewers_3_pointer_Big_last_phone_input_ms_1000_last_seen_None"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "input": "ViewerLeft",
+          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "input": "PhoneInput { at_ms: 1100 }",
+          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100_last_seen_None"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "input": "CursorSampled { at: Point { x: 0, y: 0 }, at_ms: 1100 }",
+          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1100 }",
+          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1400 }",
+          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
+          "input": "ViewerJoined",
+          "to": "s_Desk_viewers_3_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
+          "input": "ViewerLeft",
+          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
+          "input": "PhoneInput { at_ms: 1100 }",
+          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100_last_seen_Some_Point_x_0_y_0"
+        },
+        {
+          "commands": [],
+          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
+          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1100 }",
+          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0"
+        },
+        {
+          "commands": [
+            "SetPointer(Normal)",
+            "StopLocalMouseWatch"
+          ],
+          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
+          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1400 }",
+          "to": "s_Desk_viewers_2_pointer_Normal"
+        }
+      ]
+    },
+    "stream": {
+      "states": [
+        {
+          "id": "s_Hidden",
+          "label": "Hidden"
+        },
+        {
+          "id": "s_Streaming_in_flight_0_frame_pending_false",
+          "label": "Streaming { in_flight: 0, frame_pending: false }"
+        },
+        {
+          "id": "s_Streaming_in_flight_1_frame_pending_false",
+          "label": "Streaming { in_flight: 1, frame_pending: false }"
+        },
+        {
+          "id": "s_Streaming_in_flight_2_frame_pending_false",
+          "label": "Streaming { in_flight: 2, frame_pending: false }"
+        },
+        {
+          "id": "s_Streaming_in_flight_3_frame_pending_false",
+          "label": "Streaming { in_flight: 3, frame_pending: false }"
+        },
+        {
+          "id": "s_Streaming_in_flight_4_frame_pending_false",
+          "label": "Streaming { in_flight: 4, frame_pending: false }"
+        },
+        {
+          "id": "s_Streaming_in_flight_4_frame_pending_true",
+          "label": "Streaming { in_flight: 4, frame_pending: true }"
+        }
+      ],
+      "transitions": [
+        {
+          "commands": [
+            "JoinViewers"
+          ],
+          "from": "s_Hidden",
+          "input": "Visibility(true)",
+          "to": "s_Streaming_in_flight_0_frame_pending_false"
+        },
+        {
+          "commands": [
+            "LeaveViewers"
+          ],
+          "from": "s_Streaming_in_flight_0_frame_pending_false",
+          "input": "Visibility(false)",
+          "to": "s_Hidden"
+        },
+        {
+          "commands": [
+            "SendLatestFrame"
+          ],
+          "from": "s_Streaming_in_flight_0_frame_pending_false",
+          "input": "FrameReady",
+          "to": "s_Streaming_in_flight_1_frame_pending_false"
+        },
+        {
+          "commands": [
+            "LeaveViewers"
+          ],
+          "from": "s_Streaming_in_flight_1_frame_pending_false",
+          "input": "Visibility(false)",
+          "to": "s_Hidden"
+        },
+        {
+          "commands": [
+            "SendLatestFrame"
+          ],
+          "from": "s_Streaming_in_flight_1_frame_pending_false",
+          "input": "FrameReady",
+          "to": "s_Streaming_in_flight_2_frame_pending_false"
+        },
+        {
+          "commands": [],
+          "from": "s_Streaming_in_flight_1_frame_pending_false",
+          "input": "Ack",
+          "to": "s_Streaming_in_flight_0_frame_pending_false"
+        },
+        {
+          "commands": [
+            "LeaveViewers"
+          ],
+          "from": "s_Streaming_in_flight_2_frame_pending_false",
+          "input": "Visibility(false)",
+          "to": "s_Hidden"
+        },
+        {
+          "commands": [
+            "SendLatestFrame"
+          ],
+          "from": "s_Streaming_in_flight_2_frame_pending_false",
+          "input": "FrameReady",
+          "to": "s_Streaming_in_flight_3_frame_pending_false"
+        },
+        {
+          "commands": [],
+          "from": "s_Streaming_in_flight_2_frame_pending_false",
+          "input": "Ack",
+          "to": "s_Streaming_in_flight_1_frame_pending_false"
+        },
+        {
+          "commands": [
+            "LeaveViewers"
+          ],
+          "from": "s_Streaming_in_flight_3_frame_pending_false",
+          "input": "Visibility(false)",
+          "to": "s_Hidden"
+        },
+        {
+          "commands": [
+            "SendLatestFrame"
+          ],
+          "from": "s_Streaming_in_flight_3_frame_pending_false",
+          "input": "FrameReady",
+          "to": "s_Streaming_in_flight_4_frame_pending_false"
+        },
+        {
+          "commands": [],
+          "from": "s_Streaming_in_flight_3_frame_pending_false",
+          "input": "Ack",
+          "to": "s_Streaming_in_flight_2_frame_pending_false"
+        },
+        {
+          "commands": [
+            "LeaveViewers"
+          ],
+          "from": "s_Streaming_in_flight_4_frame_pending_false",
+          "input": "Visibility(false)",
+          "to": "s_Hidden"
+        },
+        {
+          "commands": [],
+          "from": "s_Streaming_in_flight_4_frame_pending_false",
+          "input": "FrameReady",
+          "to": "s_Streaming_in_flight_4_frame_pending_true"
+        },
+        {
+          "commands": [],
+          "from": "s_Streaming_in_flight_4_frame_pending_false",
+          "input": "Ack",
+          "to": "s_Streaming_in_flight_3_frame_pending_false"
+        },
+        {
+          "commands": [
+            "LeaveViewers"
+          ],
+          "from": "s_Streaming_in_flight_4_frame_pending_true",
+          "input": "Visibility(false)",
+          "to": "s_Hidden"
+        },
+        {
+          "commands": [
+            "SendLatestFrame"
+          ],
+          "from": "s_Streaming_in_flight_4_frame_pending_true",
+          "input": "Ack",
+          "to": "s_Streaming_in_flight_4_frame_pending_false"
+        }
+      ]
+    }
+  }
+}
