@@ -1,4 +1,5 @@
 mod gates;
+mod h264_check;
 mod lexer;
 mod machine;
 mod mermaid;
@@ -11,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use views::VIEWS_DIR;
 
-const USAGE: &str = "usage: cargo xtask views [--root <dir>] [--out <dir>]\n       cargo xtask check [--root <dir>]\n       target/debug/xtask profile <pid> <seconds> [--root <dir>]\n         (run the binary directly: a cargo runner with its own PID namespace hides host processes)";
+const USAGE: &str = "usage: cargo xtask views [--root <dir>] [--out <dir>]\n       cargo xtask check [--root <dir>]\n       cargo xtask h264-check   (needs the Intel iGPU at /dev/dri/renderD128 and the ffmpeg CLI)\n       target/debug/xtask profile <pid> <seconds> [--root <dir>]\n         (run the binary directly: a cargo runner with its own PID namespace hides host processes)";
 
 #[derive(Debug, PartialEq, Eq)]
 enum Task {
@@ -27,6 +28,7 @@ enum Task {
         pid: u32,
         seconds: u32,
     },
+    H264Check,
 }
 
 struct Args {
@@ -74,6 +76,7 @@ fn parse(args: &[String]) -> Result<Task, String> {
     match (words.as_slice(), out) {
         (["views"], out) => Ok(Task::Views { root, out }),
         (["check"], None) => Ok(Task::Check { root }),
+        (["h264-check"], None) if root.is_none() => Ok(Task::H264Check),
         (["profile", pid, seconds], None) => Ok(Task::Profile {
             root,
             pid: number(pid, "pid")?,
@@ -119,6 +122,7 @@ fn run(task: Task) -> Result<bool, String> {
             println!("hot path written to {}", written.display());
             Ok(true)
         }
+        Task::H264Check => Ok(h264_check::run()),
     }
 }
 
@@ -184,6 +188,16 @@ mod tests {
     #[test]
     fn profile_rejects_a_non_numeric_pid() {
         assert!(parse(&args("profile me 5")).is_err());
+    }
+
+    #[test]
+    fn h264_check_takes_no_arguments() {
+        assert_eq!(parse(&args("h264-check")), Ok(Task::H264Check));
+    }
+
+    #[test]
+    fn h264_check_rejects_a_root() {
+        assert!(parse(&args("h264-check --root /w")).is_err());
     }
 
     #[test]

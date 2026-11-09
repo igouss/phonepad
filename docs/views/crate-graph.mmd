@@ -3,10 +3,13 @@ flowchart LR
   classDef external fill:#edf2f7,stroke:#a0aec0,color:#1a202c
   c_phonepad["phonepad"]:::workspace
   c_phonepad_core["phonepad-core"]:::workspace
+  c_phonepad_h264["phonepad-h264"]:::workspace
   c_xtask["xtask"]:::workspace
   c_anyhow_1_0_104["anyhow 1.0.104"]:::external
   c_axum_0_8_9["axum 0.8.9"]:::external
   c_evdev_0_13_2["evdev 0.13.2"]:::external
+  c_ffmpeg_next_9_0_0["ffmpeg-next 9.0.0"]:::external
+  c_ffmpeg_sys_next_9_0_1["ffmpeg-sys-next 9.0.1"]:::external
   c_jpeg_encoder_0_7_1["jpeg-encoder 0.7.1"]:::external
   c_rustix_1_1_6["rustix 1.1.6"]:::external
   c_serde_1_0_229["serde 1.0.229"]:::external
@@ -27,5 +30,9 @@ flowchart LR
   c_phonepad --> c_tokio_1_54_1
   c_phonepad --> c_wayland_client_0_31_15
   c_phonepad --> c_wayland_protocols_wlr_0_3_12
+  c_phonepad_h264 --> c_ffmpeg_next_9_0_0
+  c_phonepad_h264 --> c_ffmpeg_sys_next_9_0_1
+  c_phonepad_h264 --> c_thiserror_2_0_21
   c_xtask --> c_phonepad_core
+  c_xtask --> c_phonepad_h264
   c_xtask --> c_serde_json_1_0_154

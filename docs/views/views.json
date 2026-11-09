@@ -50,8 +50,24 @@
         "to": "c_wayland_protocols_wlr_0_3_12"
       },
       {
+        "from": "c_phonepad_h264",
+        "to": "c_ffmpeg_next_9_0_0"
+      },
+      {
+        "from": "c_phonepad_h264",
+        "to": "c_ffmpeg_sys_next_9_0_1"
+      },
+      {
+        "from": "c_phonepad_h264",
+        "to": "c_thiserror_2_0_21"
+      },
+      {
         "from": "c_xtask",
         "to": "c_phonepad_core"
+      },
+      {
+        "from": "c_xtask",
+        "to": "c_phonepad_h264"
       },
       {
         "from": "c_xtask",
@@ -70,6 +86,12 @@
         "kind": "workspace",
         "label": "phonepad-core",
         "manifest": "crates/phonepad-core/Cargo.toml"
+      },
+      {
+        "id": "c_phonepad_h264",
+        "kind": "workspace",
+        "label": "phonepad-h264",
+        "manifest": "crates/phonepad-h264/Cargo.toml"
       },
       {
         "id": "c_xtask",
@@ -91,6 +113,16 @@
         "id": "c_evdev_0_13_2",
         "kind": "external",
         "label": "evdev 0.13.2"
+      },
+      {
+        "id": "c_ffmpeg_next_9_0_0",
+        "kind": "external",
+        "label": "ffmpeg-next 9.0.0"
+      },
+      {
+        "id": "c_ffmpeg_sys_next_9_0_1",
+        "kind": "external",
+        "label": "ffmpeg-sys-next 9.0.1"
       },
       {
         "id": "c_jpeg_encoder_0_7_1",
