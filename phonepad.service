@@ -5,7 +5,7 @@ After=graphical-session.target
 
 [Service]
 EnvironmentFile=%h/.config/phonepad/env
-ExecStart=/usr/bin/python3 %h/.local/share/phonepad/server.py 8765 ${PHONEPAD_LOGIN}
+ExecStart=%h/.local/share/phonepad/target/release/phonepad 8765 ${PHONEPAD_LOGIN}
 Restart=on-failure
 
 [Install]

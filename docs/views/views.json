@@ -2,15 +2,51 @@
   "crates": {
     "edges": [
       {
-        "from": "c_phonepad_capture",
+        "from": "c_phonepad",
+        "to": "c_anyhow_1_0_104"
+      },
+      {
+        "from": "c_phonepad",
+        "to": "c_axum_0_8_9"
+      },
+      {
+        "from": "c_phonepad",
+        "to": "c_evdev_0_13_2"
+      },
+      {
+        "from": "c_phonepad",
+        "to": "c_jpeg_encoder_0_7_1"
+      },
+      {
+        "from": "c_phonepad",
+        "to": "c_phonepad_core"
+      },
+      {
+        "from": "c_phonepad",
         "to": "c_rustix_1_1_6"
       },
       {
-        "from": "c_phonepad_capture",
+        "from": "c_phonepad",
+        "to": "c_serde_1_0_229"
+      },
+      {
+        "from": "c_phonepad",
+        "to": "c_serde_json_1_0_154"
+      },
+      {
+        "from": "c_phonepad",
+        "to": "c_thiserror_2_0_21"
+      },
+      {
+        "from": "c_phonepad",
+        "to": "c_tokio_1_54_1"
+      },
+      {
+        "from": "c_phonepad",
         "to": "c_wayland_client_0_31_15"
       },
       {
-        "from": "c_phonepad_capture",
+        "from": "c_phonepad",
         "to": "c_wayland_protocols_wlr_0_3_12"
       },
       {
@@ -24,10 +60,10 @@
     ],
     "nodes": [
       {
-        "id": "c_phonepad_capture",
+        "id": "c_phonepad",
         "kind": "workspace",
-        "label": "phonepad-capture",
-        "manifest": "crates/phonepad-capture/Cargo.toml"
+        "label": "phonepad",
+        "manifest": "crates/phonepad/Cargo.toml"
       },
       {
         "id": "c_phonepad_core",
@@ -42,14 +78,49 @@
         "manifest": "crates/xtask/Cargo.toml"
       },
       {
+        "id": "c_anyhow_1_0_104",
+        "kind": "external",
+        "label": "anyhow 1.0.104"
+      },
+      {
+        "id": "c_axum_0_8_9",
+        "kind": "external",
+        "label": "axum 0.8.9"
+      },
+      {
+        "id": "c_evdev_0_13_2",
+        "kind": "external",
+        "label": "evdev 0.13.2"
+      },
+      {
+        "id": "c_jpeg_encoder_0_7_1",
+        "kind": "external",
+        "label": "jpeg-encoder 0.7.1"
+      },
+      {
         "id": "c_rustix_1_1_6",
         "kind": "external",
         "label": "rustix 1.1.6"
       },
       {
+        "id": "c_serde_1_0_229",
+        "kind": "external",
+        "label": "serde 1.0.229"
+      },
+      {
         "id": "c_serde_json_1_0_154",
         "kind": "external",
         "label": "serde_json 1.0.154"
+      },
+      {
+        "id": "c_thiserror_2_0_21",
+        "kind": "external",
+        "label": "thiserror 2.0.21"
+      },
+      {
+        "id": "c_tokio_1_54_1",
+        "kind": "external",
+        "label": "tokio 1.54.1"
       },
       {
         "id": "c_wayland_client_0_31_15",

@@ -449,15 +449,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "phonepad-capture"
-version = "0.1.0"
-dependencies = [
- "rustix",
- "wayland-client",
- "wayland-protocols-wlr",
-]
-
-[[package]]
 name = "phonepad-core"
 version = "0.1.0"
 
