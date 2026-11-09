@@ -31,7 +31,7 @@ STATIC: dict[str, tuple[str, bytes]] = {
     "/icon-512.png": ("image/png", (ROOT / "icon-512.png").read_bytes()),
 }
 KEY_GAP_S: float = 0.004
-CAPTURE_BIN: Path = Path(__file__).parent / "capture" / "target" / "release" / "phonepad-capture"
+CAPTURE_BIN: Path = Path(__file__).parent / "target" / "release" / "phonepad-capture"
 FRAME_WAIT_S: float = 0.05
 MAX_IN_FLIGHT: int = 4
 LOCAL_MOUSE_POLL_S: float = 0.1

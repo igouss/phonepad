@@ -3,7 +3,7 @@ use std::io::{self, BufRead, BufWriter, Stdout, Write};
 use std::os::fd::AsFd;
 use std::os::unix::fs::FileExt;
 use std::process::ExitCode;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 
 use rustix::fs::{MemfdFlags, memfd_create};
@@ -13,8 +13,12 @@ use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::protocol::wl_shm::{self, WlShm};
 use wayland_client::protocol::wl_shm_pool::{self, WlShmPool};
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, WEnum};
-use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_frame_v1::{self, ZwlrScreencopyFrameV1};
-use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::{self, ZwlrScreencopyManagerV1};
+use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_frame_v1::{
+    self, ZwlrScreencopyFrameV1,
+};
+use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::{
+    self, ZwlrScreencopyManagerV1,
+};
 
 const IN_FLIGHT: usize = 4;
 
@@ -34,8 +38,17 @@ impl Region {
         let mut parts = line.split_whitespace();
         let output: String = parts.next()?.to_owned();
         let numbers: Vec<i32> = parts.map(str::parse).collect::<Result<_, _>>().ok()?;
-        let [global_x, global_y, local_x, local_y, width, height]: [i32; 6] = numbers.try_into().ok()?;
-        (width > 0 && height > 0).then_some(Region { output, global_x, global_y, local_x, local_y, width, height })
+        let [global_x, global_y, local_x, local_y, width, height]: [i32; 6] =
+            numbers.try_into().ok()?;
+        (width > 0 && height > 0).then_some(Region {
+            output,
+            global_x,
+            global_y,
+            local_x,
+            local_y,
+            width,
+            height,
+        })
     }
 }
 
@@ -84,21 +97,50 @@ struct State {
 
 impl State {
     fn issue(&mut self, slot: usize, qh: &QueueHandle<State>) {
-        let region: Region = self.wanted.lock().expect("region lock").clone();
-        let Some(output) = self.outputs.iter().find(|o| o.name.as_deref() == Some(region.output.as_str())) else {
+        let region: Region = self
+            .wanted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let Some(output) = self
+            .outputs
+            .iter()
+            .find(|o| o.name.as_deref() == Some(region.output.as_str()))
+        else {
             self.fatal = Some(format!("no output named {}", region.output));
             return;
         };
-        let manager: &ZwlrScreencopyManagerV1 = self.manager.as_ref().expect("screencopy manager bound");
-        manager.capture_output_region(0, &output.proxy, region.local_x, region.local_y, region.width, region.height, qh, slot);
-        self.captures[slot] = Some(Capture { region, layout: None, y_invert: false });
+        let Some(manager) = self.manager.as_ref() else {
+            self.fatal = Some("screencopy manager not bound".to_owned());
+            return;
+        };
+        manager.capture_output_region(
+            0,
+            &output.proxy,
+            region.local_x,
+            region.local_y,
+            region.width,
+            region.height,
+            qh,
+            slot,
+        );
+        self.captures[slot] = Some(Capture {
+            region,
+            layout: None,
+            y_invert: false,
+        });
     }
 
-    fn buffer_for(&mut self, slot: usize, layout: Layout, qh: &QueueHandle<State>) -> io::Result<WlBuffer> {
-        if let Some(existing) = &self.buffers[slot] {
-            if existing.layout == layout {
-                return Ok(existing.buffer.clone());
-            }
+    fn buffer_for(
+        &mut self,
+        slot: usize,
+        layout: Layout,
+        qh: &QueueHandle<State>,
+    ) -> io::Result<WlBuffer> {
+        if let Some(existing) = &self.buffers[slot]
+            && existing.layout == layout
+        {
+            return Ok(existing.buffer.clone());
         }
         if let Some(old) = self.buffers[slot].take() {
             old.buffer.destroy();
@@ -106,7 +148,10 @@ impl State {
         }
         let file: File = File::from(memfd_create("phonepad-capture", MemfdFlags::CLOEXEC)?);
         file.set_len(layout.bytes() as u64)?;
-        let shm: &WlShm = self.shm.as_ref().expect("wl_shm bound");
+        let shm: &WlShm = self
+            .shm
+            .as_ref()
+            .ok_or_else(|| io::Error::other("wl_shm not bound"))?;
         let pool: WlShmPool = shm.create_pool(file.as_fd(), layout.bytes() as i32, qh, ());
         let buffer: WlBuffer = pool.create_buffer(
             0,
@@ -117,13 +162,22 @@ impl State {
             qh,
             (),
         );
-        self.buffers[slot] = Some(Buffer { file, layout, pool, buffer: buffer.clone() });
+        self.buffers[slot] = Some(Buffer {
+            file,
+            layout,
+            pool,
+            buffer: buffer.clone(),
+        });
         Ok(buffer)
     }
 
     fn emit(&mut self, slot: usize) -> io::Result<()> {
-        let capture: Capture = self.captures[slot].take().expect("capture in flight");
-        let buffer: &Buffer = self.buffers[slot].as_ref().expect("buffer attached");
+        let capture: Capture = self.captures[slot]
+            .take()
+            .ok_or_else(|| io::Error::other("no capture in flight"))?;
+        let buffer: &Buffer = self.buffers[slot]
+            .as_ref()
+            .ok_or_else(|| io::Error::other("no buffer attached"))?;
         let layout: Layout = buffer.layout;
         let mut pixels: Vec<u8> = vec![0; layout.bytes()];
         buffer.file.read_exact_at(&mut pixels, 0)?;
@@ -145,8 +199,20 @@ impl State {
 }
 
 impl Dispatch<WlRegistry, ()> for State {
-    fn event(state: &mut State, registry: &WlRegistry, event: wl_registry::Event, _: &(), _: &Connection, qh: &QueueHandle<State>) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+    fn event(
+        state: &mut State,
+        registry: &WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<State>,
+    ) {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             match interface.as_str() {
                 "wl_shm" => state.shm = Some(registry.bind(name, 1, qh, ())),
                 "wl_output" => {
@@ -154,7 +220,9 @@ impl Dispatch<WlRegistry, ()> for State {
                     let proxy: WlOutput = registry.bind(name, version.min(4), qh, index);
                     state.outputs.push(NamedOutput { proxy, name: None });
                 }
-                "zwlr_screencopy_manager_v1" => state.manager = Some(registry.bind(name, version.min(3), qh, ())),
+                "zwlr_screencopy_manager_v1" => {
+                    state.manager = Some(registry.bind(name, version.min(3), qh, ()))
+                }
                 _ => {}
             }
         }
@@ -162,7 +230,14 @@ impl Dispatch<WlRegistry, ()> for State {
 }
 
 impl Dispatch<WlOutput, usize> for State {
-    fn event(state: &mut State, _: &WlOutput, event: wl_output::Event, index: &usize, _: &Connection, _: &QueueHandle<State>) {
+    fn event(
+        state: &mut State,
+        _: &WlOutput,
+        event: wl_output::Event,
+        index: &usize,
+        _: &Connection,
+        _: &QueueHandle<State>,
+    ) {
         if let wl_output::Event::Name { name } = event {
             state.outputs[*index].name = Some(name);
         }
@@ -180,12 +255,24 @@ impl Dispatch<ZwlrScreencopyFrameV1, usize> for State {
     ) {
         let slot: usize = *slot;
         match event {
-            zwlr_screencopy_frame_v1::Event::Buffer { format: WEnum::Value(format), width, height, stride } => {
+            zwlr_screencopy_frame_v1::Event::Buffer {
+                format: WEnum::Value(format),
+                width,
+                height,
+                stride,
+            } => {
                 if let Some(capture) = state.captures[slot].as_mut() {
-                    capture.layout = Some(Layout { format, width, height, stride });
+                    capture.layout = Some(Layout {
+                        format,
+                        width,
+                        height,
+                        stride,
+                    });
                 }
             }
-            zwlr_screencopy_frame_v1::Event::Flags { flags: WEnum::Value(flags) } => {
+            zwlr_screencopy_frame_v1::Event::Flags {
+                flags: WEnum::Value(flags),
+            } => {
                 if let Some(capture) = state.captures[slot].as_mut() {
                     capture.y_invert = flags.contains(zwlr_screencopy_frame_v1::Flags::YInvert);
                 }
@@ -214,21 +301,49 @@ impl Dispatch<ZwlrScreencopyFrameV1, usize> for State {
                 state.captures[slot] = None;
                 state.issue(slot, qh);
             }
-            _ => {}
+            zwlr_screencopy_frame_v1::Event::Buffer { .. }
+            | zwlr_screencopy_frame_v1::Event::Flags { .. }
+            | zwlr_screencopy_frame_v1::Event::Damage { .. }
+            | zwlr_screencopy_frame_v1::Event::LinuxDmabuf { .. }
+            | _ => {}
         }
     }
 }
 
 impl Dispatch<WlShm, ()> for State {
-    fn event(_: &mut State, _: &WlShm, _: wl_shm::Event, _: &(), _: &Connection, _: &QueueHandle<State>) {}
+    fn event(
+        _: &mut State,
+        _: &WlShm,
+        _: wl_shm::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<State>,
+    ) {
+    }
 }
 
 impl Dispatch<WlShmPool, ()> for State {
-    fn event(_: &mut State, _: &WlShmPool, _: wl_shm_pool::Event, _: &(), _: &Connection, _: &QueueHandle<State>) {}
+    fn event(
+        _: &mut State,
+        _: &WlShmPool,
+        _: wl_shm_pool::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<State>,
+    ) {
+    }
 }
 
 impl Dispatch<WlBuffer, ()> for State {
-    fn event(_: &mut State, _: &WlBuffer, _: wl_buffer::Event, _: &(), _: &Connection, _: &QueueHandle<State>) {}
+    fn event(
+        _: &mut State,
+        _: &WlBuffer,
+        _: wl_buffer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<State>,
+    ) {
+    }
 }
 
 impl Dispatch<ZwlrScreencopyManagerV1, ()> for State {
@@ -256,14 +371,15 @@ fn run() -> Result<(), String> {
     thread::spawn(move || {
         for line in io::stdin().lock().lines() {
             match read_region(line) {
-                Ok(region) => *updater.lock().expect("region lock") = region,
+                Ok(region) => *updater.lock().unwrap_or_else(PoisonError::into_inner) = region,
                 Err(err) => eprintln!("phonepad-capture: {err}"),
             }
         }
         std::process::exit(0);
     });
 
-    let conn: Connection = Connection::connect_to_env().map_err(|err| format!("wayland connect: {err}"))?;
+    let conn: Connection =
+        Connection::connect_to_env().map_err(|err| format!("wayland connect: {err}"))?;
     let mut queue: EventQueue<State> = conn.new_event_queue();
     let qh: QueueHandle<State> = queue.handle();
     conn.display().get_registry(&qh, ());
@@ -277,8 +393,12 @@ fn run() -> Result<(), String> {
         out: BufWriter::with_capacity(1 << 22, io::stdout()),
         fatal: None,
     };
-    queue.roundtrip(&mut state).map_err(|err| format!("roundtrip: {err}"))?;
-    queue.roundtrip(&mut state).map_err(|err| format!("roundtrip: {err}"))?;
+    queue
+        .roundtrip(&mut state)
+        .map_err(|err| format!("roundtrip: {err}"))?;
+    queue
+        .roundtrip(&mut state)
+        .map_err(|err| format!("roundtrip: {err}"))?;
     if state.shm.is_none() || state.manager.is_none() {
         return Err("compositor lacks wl_shm or zwlr_screencopy_manager_v1".to_owned());
     }
@@ -289,7 +409,9 @@ fn run() -> Result<(), String> {
         if let Some(fatal) = state.fatal.take() {
             return Err(fatal);
         }
-        queue.blocking_dispatch(&mut state).map_err(|err| format!("dispatch: {err}"))?;
+        queue
+            .blocking_dispatch(&mut state)
+            .map_err(|err| format!("dispatch: {err}"))?;
     }
 }
 
