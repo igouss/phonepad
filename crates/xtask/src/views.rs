@@ -1,7 +1,7 @@
 use crate::machine::{Machine, Transition, explore};
 use crate::mermaid::{Ids, escape_label};
 use crate::workspace::{Member, Package, Workspace};
-use phonepad_core::{desk, stream};
+use phonepad_core::{desk, stream, wallpaper};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -29,6 +29,15 @@ pub fn machines() -> BTreeMap<String, Machine> {
                 desk::all_inputs(),
                 desk::decide,
                 desk::evolve,
+            ),
+        ),
+        (
+            String::from("wallpaper"),
+            explore(
+                wallpaper::all_states(),
+                wallpaper::all_inputs(),
+                wallpaper::decide,
+                wallpaper::evolve,
             ),
         ),
     ])

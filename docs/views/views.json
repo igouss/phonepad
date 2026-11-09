@@ -652,6 +652,56 @@
           "to": "s_Streaming_in_flight_4_frame_pending_false"
         }
       ]
+    },
+    "wallpaper": {
+      "states": [
+        {
+          "id": "s_Untouched",
+          "label": "Untouched"
+        },
+        {
+          "id": "s_PausedByUs",
+          "label": "PausedByUs"
+        }
+      ],
+      "transitions": [
+        {
+          "commands": [
+            "Resume",
+            "RemoveMarker"
+          ],
+          "from": "s_Untouched",
+          "input": "Startup { marker_present: true }",
+          "to": "s_Untouched"
+        },
+        {
+          "commands": [
+            "Pause",
+            "WriteMarker"
+          ],
+          "from": "s_Untouched",
+          "input": "CaptureStarted { manual_pause: false }",
+          "to": "s_PausedByUs"
+        },
+        {
+          "commands": [
+            "Resume",
+            "RemoveMarker"
+          ],
+          "from": "s_PausedByUs",
+          "input": "Startup { marker_present: true }",
+          "to": "s_Untouched"
+        },
+        {
+          "commands": [
+            "Resume",
+            "RemoveMarker"
+          ],
+          "from": "s_PausedByUs",
+          "input": "CaptureStopped",
+          "to": "s_Untouched"
+        }
+      ]
     }
   }
 }

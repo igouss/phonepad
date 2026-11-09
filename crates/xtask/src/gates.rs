@@ -2,6 +2,7 @@ use crate::lexer::{self, Scan};
 use crate::profile::HOT_PATH;
 use crate::views::{Files, VIEWS_DIR, read_dir_files, regenerate};
 use crate::workspace::{self, Member, Workspace};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -146,7 +147,62 @@ fn views_fresh(root: &Path) -> Result<Vec<String>, String> {
     } else {
         Files::new()
     };
-    Ok(stale_views(&fresh, &committed))
+    let workspace: Workspace = workspace::load(root)?;
+    let core: &Member = workspace
+        .member(CORE)
+        .ok_or_else(|| format!("{CORE} is not a workspace member"))?;
+    let core_src: PathBuf = root
+        .join(&core.manifest)
+        .parent()
+        .map(|dir| dir.join("src"))
+        .ok_or_else(|| format!("{}: no parent directory", core.manifest))?;
+    let mut findings: Vec<String> = stale_views(&fresh, &committed);
+    findings.extend(unwired_machines(&machine_modules(root, &core_src)?, &fresh));
+    Ok(findings)
+}
+
+fn declares_machine(source: &str) -> bool {
+    source
+        .lines()
+        .any(|line| line.trim_start().starts_with("pub fn all_states("))
+}
+
+fn machine_modules(root: &Path, src: &Path) -> Result<BTreeMap<String, String>, String> {
+    let mut modules: BTreeMap<String, String> = BTreeMap::new();
+    let mut pending: Vec<PathBuf> = vec![src.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let entries: std::fs::ReadDir =
+            std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        for entry in entries {
+            let path: PathBuf = entry.map_err(|e| format!("{}: {e}", dir.display()))?.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let source: String = std::fs::read_to_string(&path)
+                    .map_err(|e| format!("{}: {e}", path.display()))?;
+                if declares_machine(&source) {
+                    let relative: &Path = path.strip_prefix(src).map_err(|e| e.to_string())?;
+                    let module: String = relative
+                        .with_extension("")
+                        .to_string_lossy()
+                        .replace(std::path::MAIN_SEPARATOR, "::");
+                    let shown: &Path = path.strip_prefix(root).unwrap_or(&path);
+                    modules.insert(module, shown.display().to_string());
+                }
+            }
+        }
+    }
+    Ok(modules)
+}
+
+fn unwired_machines(modules: &BTreeMap<String, String>, fresh: &Files) -> Vec<String> {
+    modules
+        .iter()
+        .filter(|(module, _)| !fresh.contains_key(&format!("{}.mmd", module.replace("::", "-"))))
+        .map(|(module, path)| {
+            format!("unwired machine {module} ({path}) declares all_states but the generator emits no diagram for it")
+        })
+        .collect()
 }
 
 fn stale_views(fresh: &Files, committed: &Files) -> Vec<String> {
@@ -171,7 +227,10 @@ fn stale_views(fresh: &Files, committed: &Files) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Language, Verdict, comment_findings, core_findings, language, stale_views};
+    use super::{
+        Language, Verdict, comment_findings, core_findings, declares_machine, language,
+        stale_views, unwired_machines,
+    };
     use crate::views::Files;
     use crate::workspace::{Member, Package, Workspace};
     use std::collections::BTreeSet;
@@ -334,5 +393,72 @@ mod tests {
             Verdict::from(Err(String::from("no git"))),
             Verdict::Fail(vec![String::from("error: no git")])
         );
+    }
+
+    fn modules(names: &[&str]) -> std::collections::BTreeMap<String, String> {
+        names
+            .iter()
+            .map(|n| (n.to_string(), format!("src/{n}.rs")))
+            .collect()
+    }
+
+    #[test]
+    fn a_module_without_all_states_is_not_a_machine() {
+        assert!(!declares_machine(
+            "pub fn decide() {}\nfn all_states() {}\n"
+        ));
+    }
+
+    #[test]
+    fn a_module_with_public_all_states_is_a_machine() {
+        assert!(declares_machine(
+            "pub fn decide() {}\n    pub fn all_states() -> Vec<S> {\n"
+        ));
+    }
+
+    #[test]
+    fn no_machines_are_never_unwired() {
+        assert_eq!(
+            unwired_machines(&modules(&[]), &files(&[("a.mmd", "x")])),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_wired_machine_is_not_reported() {
+        assert_eq!(
+            unwired_machines(&modules(&["stream"]), &files(&[("stream.mmd", "x")])),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn every_machine_without_a_diagram_is_reported() {
+        assert_eq!(
+            unwired_machines(
+                &modules(&["clock", "stream", "valve"]),
+                &files(&[("stream.mmd", "x")])
+            ),
+            vec![
+                String::from(
+                    "unwired machine clock (src/clock.rs) declares all_states but the generator emits no diagram for it"
+                ),
+                String::from(
+                    "unwired machine valve (src/valve.rs) declares all_states but the generator emits no diagram for it"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn every_core_machine_is_wired_into_the_generator() {
+        let root: std::path::PathBuf = crate::views::own_root().unwrap();
+        let found: Vec<String> =
+            super::machine_modules(&root, &root.join("crates/phonepad-core/src"))
+                .unwrap()
+                .into_keys()
+                .collect();
+        let wired: Vec<String> = crate::views::machines().into_keys().collect();
+        assert_eq!(found, wired);
     }
 }
