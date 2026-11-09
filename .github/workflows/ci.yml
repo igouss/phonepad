@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
-      - run: pacman -Syu --noconfirm --needed base-devel git rustup clang pkgconf ffmpeg libva
+      - run: pacman -Syu --noconfirm --needed base-devel git rustup clang pkgconf ffmpeg libva libxkbcommon xkeyboard-config
       - uses: actions/checkout@v5
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: rustup show active-toolchain

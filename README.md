@@ -17,14 +17,14 @@ KDE Connect does not work for this on Hyprland: its Wayland input needs the `Rem
 phone (installed web app)  ──wss──▶  tailscale serve :443  ──▶  phonepad on 127.0.0.1:8765
                                                                   │
                                     uinput virtual mouse+keyboard ◀┤
-                                    wtype (non-ASCII text)         ◀┤
+                                    wtype (chars with no key)      ◀┤
                                     wlr-screencopy + VA-API thread ──▶ H.264 access units back to the phone
 ```
 
 Three crates (see [ADR 0001](docs/adr/0001-rust-server.md)):
 
-- `crates/phonepad-core`: the decisions, as pure functions with no dependencies. `stream` is the per-phone flow control of H.264 access units (up to 4 unacknowledged; a phone that falls behind gets no delta until the next keyframe, and asks for one only once it has credit to take it), `desk` the viewer count and pointer size, `wallpaper` whether phonepad paused the wallpaper (recorded in `$XDG_RUNTIME_DIR/phonepad/wallpaper-paused`, so a crashed run's pause is resumed at the next start), `geometry` the capture region, `keys` the US-layout typing plan. The state machines are sum types driven by `decide` and `evolve`.
-- `crates/phonepad`: the binary. axum serves the page and the WebSocket; one actor per phone session and one desk actor own the core state machines and execute their commands; one thread owns the uinput device. While the app is visible on any phone, one capture thread keeps a long-lived `wlr-screencopy` capture (`copy_with_damage`) of the whole monitor under the pointer in a pool of three encoder surfaces exported as linear dmabufs, two in flight. It encodes when a new frame arrives, the pointer moves (re-cropping the latest frame on the GPU, no new capture) or a phone asks for a keyframe, at most 60 times a second. Each access unit is encoded once and broadcast to every phone; keyframe requests from all phones coalesce into one flag; a phone whose socket falls behind misses units and resyncs on a keyframe instead of slowing the others. A cursor sampler (60/s while the pointer moves, 20/s when still) keeps Hyprland IPC off the encode path. `crates/phonepad-h264` wraps FFmpeg's VA-API H.264 encoder and is the only crate allowed `unsafe` (see [ADR 0002](docs/adr/0002-h264-vaapi.md)); `PHONEPAD_RENDER_NODE` overrides the render node (default `/dev/dri/renderD128`).
+- `crates/phonepad-core`: the decisions, as pure functions with no dependencies. `stream` is the per-phone flow control of H.264 access units (up to 4 unacknowledged; a phone that falls behind gets no delta until the next keyframe, and asks for one only once it has credit to take it), `desk` the viewer count and pointer size, `wallpaper` whether phonepad paused the wallpaper (recorded in `$XDG_RUNTIME_DIR/phonepad/wallpaper-paused`, so a crashed run's pause is resumed at the next start), `geometry` the capture region, `keys` the typing plan over a character-to-key table. The state machines are sum types driven by `decide` and `evolve`.
+- `crates/phonepad`: the binary. axum serves the page and the WebSocket; one actor per phone session and one desk actor own the core state machines and execute their commands; one thread owns the uinput device. For each typed text it reads the layout Hyprland applies to the `phonepad` keyboard (`j/devices`: rules, model, layout, variant, options, active layout) and builds the character-to-key table with libxkbcommon, keeping the last one until the layout changes; characters the layout has no key for go to `wtype`. If the layout cannot be read or compiled, the text is logged as not typed. While the app is visible on any phone, one capture thread keeps a long-lived `wlr-screencopy` capture (`copy_with_damage`) of the whole monitor under the pointer in a pool of three encoder surfaces exported as linear dmabufs, two in flight. It encodes when a new frame arrives, the pointer moves (re-cropping the latest frame on the GPU, no new capture) or a phone asks for a keyframe, at most 60 times a second. Each access unit is encoded once and broadcast to every phone; keyframe requests from all phones coalesce into one flag; a phone whose socket falls behind misses units and resyncs on a keyframe instead of slowing the others. A cursor sampler (60/s while the pointer moves, 20/s when still) keeps Hyprland IPC off the encode path. `crates/phonepad-h264` wraps FFmpeg's VA-API H.264 encoder and is the only crate allowed `unsafe` (see [ADR 0002](docs/adr/0002-h264-vaapi.md)); `PHONEPAD_RENDER_NODE` overrides the render node (default `/dev/dri/renderD128`).
 
 The page (`pad.html`, `manifest.webmanifest`, icons) decodes the stream with WebCodecs `VideoDecoder` and is compiled into the binary, so changing it needs a rebuild.
 
@@ -37,6 +37,7 @@ The page (`pad.html`, `manifest.webmanifest`, icons) decodes the stream with Web
 ## Requirements
 
 - Hyprland (needs `zwlr_screencopy_manager_v1` v3), `hyprctl`, `gsettings`, `wtype`
+- libxkbcommon and xkeyboard-config
 - Rust (stable, pinned in `rust-toolchain.toml`)
 - Read/write access to `/dev/uinput` for your user
 - Tailscale on the desktop and on the phone, desktop with `tailscale set --operator=$USER`
@@ -88,4 +89,3 @@ On an Intel UHD Graphics 630 (Hyprland renders there; AQ_DRM_DEVICES selects the
 
 - Typing on the real keyboard alone does not shrink the pointer: real keyboard input is not visible without joining the `input` group, which would expose all keystrokes to every program.
 - A Hyprland pointer warp more than 300 ms after the last phone input counts as real mouse use.
-- ASCII typing assumes a US keyboard layout.

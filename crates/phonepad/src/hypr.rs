@@ -7,6 +7,8 @@ use std::time::Duration;
 
 use anyhow::Context;
 use phonepad_core::geometry::{Monitor, Point};
+
+use crate::keymap::KeyboardLayout;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
@@ -27,6 +29,33 @@ struct HyprMonitor {
     height: u32,
     scale: f64,
     transform: u8,
+}
+
+const KEYBOARD: &str = "phonepad";
+
+#[derive(Deserialize)]
+struct Devices {
+    keyboards: Vec<HyprKeyboard>,
+}
+
+#[derive(Deserialize)]
+struct HyprKeyboard {
+    name: String,
+    #[serde(flatten)]
+    layout: KeyboardLayout,
+}
+
+pub fn phonepad_keyboard() -> anyhow::Result<KeyboardLayout> {
+    keyboard(query("devices")?)
+}
+
+fn keyboard(devices: Devices) -> anyhow::Result<KeyboardLayout> {
+    devices
+        .keyboards
+        .into_iter()
+        .find(|keyboard: &HyprKeyboard| keyboard.name == KEYBOARD)
+        .map(|keyboard: HyprKeyboard| keyboard.layout)
+        .with_context(|| format!("Hyprland has no keyboard named {KEYBOARD}"))
 }
 
 pub fn cursor() -> anyhow::Result<Point> {
@@ -80,4 +109,47 @@ fn resolve_socket_path() -> anyhow::Result<PathBuf> {
         .join("hypr")
         .join(instance)
         .join(".socket.sock"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FCITX: &str = r#"{"address": "0x1", "name": "hl-virtual-keyboard-fcitx5", "rules": "", "model": "", "layout": "us", "variant": "", "options": "", "active_layout_index": 0, "active_keymap": "English (US)", "capsLock": false, "numLock": true, "main": true}"#;
+    const PHONEPAD: &str = r#"{"address": "0x2", "name": "phonepad", "rules": "evdev", "model": "pc105", "layout": "us,de", "variant": ",nodeadkeys", "options": "omarchy:shift_caps_compose", "active_layout_index": 1, "active_keymap": "German", "capsLock": false, "numLock": true, "main": false}"#;
+
+    fn devices(keyboards: &[&str]) -> anyhow::Result<Devices> {
+        Ok(serde_json::from_str(&format!(
+            r#"{{"mice": [], "tablets": [], "touch": [], "switches": [], "keyboards": [{}]}}"#,
+            keyboards.join(",")
+        ))?)
+    }
+
+    #[test]
+    fn phonepad_entry_supplies_the_layout_not_the_main_keyboard() -> anyhow::Result<()> {
+        assert_eq!(
+            keyboard(devices(&[FCITX, PHONEPAD])?)?,
+            KeyboardLayout {
+                rules: String::from("evdev"),
+                model: String::from("pc105"),
+                layout: String::from("us,de"),
+                variant: String::from(",nodeadkeys"),
+                options: String::from("omarchy:shift_caps_compose"),
+                active_layout_index: 1,
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn no_phonepad_entry_is_an_error() -> anyhow::Result<()> {
+        assert!(keyboard(devices(&[FCITX])?).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn no_keyboards_is_an_error() -> anyhow::Result<()> {
+        assert!(keyboard(devices(&[])?).is_err());
+        Ok(())
+    }
 }

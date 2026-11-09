@@ -4,6 +4,7 @@ mod desk;
 mod http;
 mod hypr;
 mod input;
+mod keymap;
 mod owe;
 mod session;
 mod tool;

@@ -3,11 +3,15 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
+use anyhow::Context;
 use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, InputEvent, KeyCode, KeyEvent, RelativeAxisCode, RelativeAxisEvent};
 use phonepad_core::input::{Button, InputCommand};
-use phonepad_core::keys::{Stroke, typing_plan};
+use phonepad_core::keys::{Key, Stroke, Table, typing_plan};
 use tokio::sync::mpsc;
+
+use crate::hypr;
+use crate::keymap::{KeyboardLayout, Keymaps};
 
 const KEY_GAP: Duration = Duration::from_millis(4);
 const QUEUE: usize = 256;
@@ -32,7 +36,7 @@ pub fn open_device() -> io::Result<VirtualDevice> {
         .build()
 }
 
-fn device_keys() -> impl Iterator<Item = KeyCode> {
+pub fn device_keys() -> impl Iterator<Item = KeyCode> {
     KEY_CODES
         .map(KeyCode::new)
         .filter(|code: &KeyCode| format!("{code:?}").starts_with("KEY_"))
@@ -43,8 +47,9 @@ pub fn spawn(mut device: VirtualDevice) -> mpsc::Sender<InputCommand> {
     let (sender, mut receiver): (mpsc::Sender<InputCommand>, mpsc::Receiver<InputCommand>) =
         mpsc::channel(QUEUE);
     thread::spawn(move || {
+        let mut keymaps: Keymaps = Keymaps::default();
         while let Some(command) = receiver.blocking_recv() {
-            if let Err(err) = execute(&mut device, &command) {
+            if let Err(err) = execute(&mut device, &mut keymaps, &command) {
                 eprintln!("input {command:?}: {err}");
             }
         }
@@ -59,7 +64,11 @@ pub fn release_buttons() -> [InputCommand; 3] {
     })
 }
 
-fn execute(device: &mut VirtualDevice, command: &InputCommand) -> io::Result<()> {
+fn execute(
+    device: &mut VirtualDevice,
+    keymaps: &mut Keymaps,
+    command: &InputCommand,
+) -> io::Result<()> {
     match command {
         InputCommand::Move { dx, dy } => device.emit(&[
             rel(RelativeAxisCode::REL_X, *dx),
@@ -73,7 +82,7 @@ fn execute(device: &mut VirtualDevice, command: &InputCommand) -> io::Result<()>
             device.emit(&[key(button_code(*button), i32::from(*pressed))])
         }
         InputCommand::Chord(codes) => chord(device, codes),
-        InputCommand::Text(text) => type_text(device, text),
+        InputCommand::Text(text) => type_text(device, keymaps, text),
     }
 }
 
@@ -87,31 +96,53 @@ fn chord(device: &mut VirtualDevice, codes: &[u16]) -> io::Result<()> {
     Ok(())
 }
 
-fn type_text(device: &mut VirtualDevice, text: &str) -> io::Result<()> {
-    for stroke in typing_plan(text) {
+fn type_text(device: &mut VirtualDevice, keymaps: &mut Keymaps, text: &str) -> io::Result<()> {
+    let table: &Table = match hypr::phonepad_keyboard().and_then(|layout: KeyboardLayout| {
+        let names: String = format!("{layout:?}");
+        keymaps.table(layout).context(names)
+    }) {
+        Ok(table) => table,
+        Err(err) => {
+            eprintln!(
+                "text of {} chars not typed, no keymap: {err:#}",
+                text.chars().count()
+            );
+            return Ok(());
+        }
+    };
+    for stroke in typing_plan(text, table) {
         match stroke {
-            Stroke::Key { code, shift } => tap(device, KeyCode::new(code), shift)?,
+            Stroke::Key(key) => tap(device, key)?,
             Stroke::Unicode(run) => wtype(&run),
         }
     }
     Ok(())
 }
 
-fn tap(device: &mut VirtualDevice, code: KeyCode, shift: bool) -> io::Result<()> {
-    let shift_key: Option<KeyCode> = shift.then_some(KeyCode::KEY_LEFTSHIFT);
-    let press: Vec<InputEvent> = shift_key
-        .map(|k: KeyCode| key(k, 1))
-        .into_iter()
-        .chain([key(code, 1)])
-        .collect();
-    let release: Vec<InputEvent> = [key(code, 0)]
-        .into_iter()
-        .chain(shift_key.map(|k: KeyCode| key(k, 0)))
-        .collect();
+fn tap(device: &mut VirtualDevice, key: Key) -> io::Result<()> {
+    let [press, release]: [Vec<InputEvent>; 2] = tap_events(key);
     device.emit(&press)?;
     device.emit(&release)?;
     thread::sleep(KEY_GAP);
     Ok(())
+}
+
+fn tap_events(key: Key) -> [Vec<InputEvent>; 2] {
+    let codes: Vec<KeyCode> = key
+        .shift
+        .into_iter()
+        .chain(key.level3)
+        .chain([key.code])
+        .map(KeyCode::new)
+        .collect();
+    [
+        codes.iter().map(|k: &KeyCode| self::key(*k, 1)).collect(),
+        codes
+            .iter()
+            .rev()
+            .map(|k: &KeyCode| self::key(*k, 0))
+            .collect(),
+    ]
 }
 
 fn wtype(run: &str) {
@@ -140,144 +171,41 @@ fn rel(axis: RelativeAxisCode, value: i32) -> InputEvent {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
     use super::*;
 
-    const PRINTABLE_ASCII: &str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
-
-    const US_LAYOUT: [(&str, bool); 95] = [
-        ("SPACE", false),
-        ("1", true),
-        ("APOSTROPHE", true),
-        ("3", true),
-        ("4", true),
-        ("5", true),
-        ("7", true),
-        ("APOSTROPHE", false),
-        ("9", true),
-        ("0", true),
-        ("8", true),
-        ("EQUAL", true),
-        ("COMMA", false),
-        ("MINUS", false),
-        ("DOT", false),
-        ("SLASH", false),
-        ("0", false),
-        ("1", false),
-        ("2", false),
-        ("3", false),
-        ("4", false),
-        ("5", false),
-        ("6", false),
-        ("7", false),
-        ("8", false),
-        ("9", false),
-        ("SEMICOLON", true),
-        ("SEMICOLON", false),
-        ("COMMA", true),
-        ("EQUAL", false),
-        ("DOT", true),
-        ("SLASH", true),
-        ("2", true),
-        ("A", true),
-        ("B", true),
-        ("C", true),
-        ("D", true),
-        ("E", true),
-        ("F", true),
-        ("G", true),
-        ("H", true),
-        ("I", true),
-        ("J", true),
-        ("K", true),
-        ("L", true),
-        ("M", true),
-        ("N", true),
-        ("O", true),
-        ("P", true),
-        ("Q", true),
-        ("R", true),
-        ("S", true),
-        ("T", true),
-        ("U", true),
-        ("V", true),
-        ("W", true),
-        ("X", true),
-        ("Y", true),
-        ("Z", true),
-        ("LEFTBRACE", false),
-        ("BACKSLASH", false),
-        ("RIGHTBRACE", false),
-        ("6", true),
-        ("MINUS", true),
-        ("GRAVE", false),
-        ("A", false),
-        ("B", false),
-        ("C", false),
-        ("D", false),
-        ("E", false),
-        ("F", false),
-        ("G", false),
-        ("H", false),
-        ("I", false),
-        ("J", false),
-        ("K", false),
-        ("L", false),
-        ("M", false),
-        ("N", false),
-        ("O", false),
-        ("P", false),
-        ("Q", false),
-        ("R", false),
-        ("S", false),
-        ("T", false),
-        ("U", false),
-        ("V", false),
-        ("W", false),
-        ("X", false),
-        ("Y", false),
-        ("Z", false),
-        ("LEFTBRACE", true),
-        ("BACKSLASH", true),
-        ("RIGHTBRACE", true),
-        ("GRAVE", true),
-    ];
-
-    fn us_stroke(entry: &(&str, bool)) -> Stroke {
-        Stroke::Key {
-            code: KeyCode::from_str(&format!("KEY_{}", entry.0))
-                .unwrap()
-                .code(),
-            shift: entry.1,
-        }
-    }
-
     #[test]
-    fn printable_ascii_types_as_the_us_layout_keys_named_by_evdev() {
-        let expected: Vec<(char, Stroke)> = PRINTABLE_ASCII
-            .chars()
-            .zip(US_LAYOUT.iter().map(us_stroke))
-            .collect();
-        let actual: Vec<(char, Stroke)> = PRINTABLE_ASCII
-            .chars()
-            .map(|ch: char| (ch, typing_plan(&ch.to_string())))
-            .map(|(ch, plan): (char, Vec<Stroke>)| (ch, plan.into_iter().next().unwrap()))
-            .collect();
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn printable_ascii_is_all_95_characters_in_order() {
+    fn plain_key_is_pressed_and_released_alone() {
         assert_eq!(
-            PRINTABLE_ASCII,
-            (32u8..=126).map(char::from).collect::<String>()
+            tap_events(Key {
+                code: 30,
+                shift: None,
+                level3: None
+            }),
+            [vec![key(KeyCode::KEY_A, 1)], vec![key(KeyCode::KEY_A, 0)]]
         );
     }
 
     #[test]
-    fn whole_ascii_string_plans_one_stroke_per_character() {
-        assert_eq!(typing_plan(PRINTABLE_ASCII).len(), 95);
+    fn modifiers_are_held_around_the_key_and_released_in_reverse() {
+        assert_eq!(
+            tap_events(Key {
+                code: 31,
+                shift: Some(42),
+                level3: Some(100)
+            }),
+            [
+                vec![
+                    key(KeyCode::KEY_LEFTSHIFT, 1),
+                    key(KeyCode::KEY_RIGHTALT, 1),
+                    key(KeyCode::KEY_S, 1)
+                ],
+                vec![
+                    key(KeyCode::KEY_S, 0),
+                    key(KeyCode::KEY_RIGHTALT, 0),
+                    key(KeyCode::KEY_LEFTSHIFT, 0)
+                ]
+            ]
+        );
     }
 
     #[test]

@@ -54,6 +54,10 @@
         "to": "c_wayland_protocols_wlr_0_3_12"
       },
       {
+        "from": "c_phonepad",
+        "to": "c_xkbcommon_0_8_0"
+      },
+      {
         "from": "c_phonepad_h264",
         "to": "c_ffmpeg_next_9_0_0"
       },
@@ -167,6 +171,11 @@
         "id": "c_wayland_protocols_wlr_0_3_12",
         "kind": "external",
         "label": "wayland-protocols-wlr 0.3.12"
+      },
+      {
+        "id": "c_xkbcommon_0_8_0",
+        "kind": "external",
+        "label": "xkbcommon 0.8.0"
       }
     ]
   },
