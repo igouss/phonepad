@@ -1,0 +1,16 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+disallowed-methods = [
+    { path = "std::time::Instant::now", reason = "time enters the core as an input field" },
+    { path = "std::time::SystemTime::now", reason = "time enters the core as an input field" },
+    { path = "std::env::var", reason = "configuration enters the core as an argument" },
+    { path = "std::fs::read", reason = "the core performs no I/O" },
+    { path = "std::fs::read_to_string", reason = "the core performs no I/O" },
+    { path = "std::fs::write", reason = "the core performs no I/O" },
+    { path = "std::fs::File::open", reason = "the core performs no I/O" },
+    { path = "std::fs::File::create", reason = "the core performs no I/O" },
+    { path = "std::net::TcpStream::connect", reason = "the core performs no I/O" },
+    { path = "std::process::Command::new", reason = "the core performs no I/O" },
+    { path = "std::thread::spawn", reason = "the core is synchronous and single-threaded" },
+    { path = "std::thread::sleep", reason = "the core is synchronous and single-threaded" },
+]
