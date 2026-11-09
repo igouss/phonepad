@@ -1,0 +1,205 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, interactive-widget=resizes-content">
+<title>phonepad</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon-192.png">
+<meta name="theme-color" content="#111111">
+<style>
+  :root { --bg:#111; --pad:#1b1b1b; --fg:#ddd; --btn:#2a2a2a; --on:#3d6; }
+  * { box-sizing:border-box; -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100dvh; background:var(--bg); color:var(--fg); font:16px system-ui, sans-serif;
+    overscroll-behavior:none; touch-action:none; overflow:hidden; }
+  body { display:flex; flex-direction:column; }
+  #status { position:absolute; z-index:1; top:8px; right:12px; font-size:12px; opacity:.6; pointer-events:none; }
+  #pad { flex:1; margin:8px 24px 0; background:var(--pad); border-radius:16px; touch-action:none; position:relative; overflow:hidden; }
+  #view { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  .row { display:flex; gap:6px; margin:6px 24px 0; }
+  .row button { flex:1; height:52px; border:0; border-radius:10px; background:var(--btn); color:var(--fg); font-size:15px; touch-action:manipulation; }
+  .row button.on { background:var(--on); color:#000; }
+  #mouse button { height:64px; }
+  #keys { margin-bottom:8px; }
+  #kbd { position:fixed; left:0; bottom:0; width:1px; height:1px; opacity:0; border:0; padding:0; }
+</style>
+</head>
+<body>
+<div id="status">connecting…</div>
+<div id="pad"><canvas id="view"></canvas></div>
+<div class="row" id="mouse">
+  <button data-btn="left">L</button><button data-btn="middle">M</button><button data-btn="right">R</button>
+</div>
+<div class="row">
+  <button data-mod="KEY_LEFTCTRL">Ctrl</button><button data-mod="KEY_LEFTALT">Alt</button>
+  <button data-mod="KEY_LEFTSHIFT">Shift</button><button data-mod="KEY_LEFTMETA">Super</button>
+  <button id="zoombtn"></button><button id="kbdbtn">⌨</button>
+</div>
+<div class="row" id="keys">
+  <button data-key="KEY_ESC">Esc</button><button data-key="KEY_TAB">Tab</button>
+  <button data-key="KEY_LEFT">←</button><button data-key="KEY_UP">↑</button>
+  <button data-key="KEY_DOWN">↓</button><button data-key="KEY_RIGHT">→</button>
+  <button data-key="KEY_BACKSPACE">⌫</button><button data-key="KEY_ENTER">⏎</button>
+</div>
+<input id="kbd" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+<script>
+const SENS = 1.6, ACCEL = 0.06, SCROLL = 6, TAP_MS = 180, TAP_PX = 8;
+const ZOOMS = [1.5, 2.5, 4];
+const status = document.getElementById("status");
+const pad = document.getElementById("pad");
+const view = document.getElementById("view");
+const ctx = view.getContext("2d");
+const zoombtn = document.getElementById("zoombtn");
+let zoom = 2.5;
+try { const z = parseFloat(localStorage.getItem("zoom")); if (ZOOMS.includes(z)) zoom = z; } catch (_) {}
+let ws = null;
+function connect() {
+  ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => { status.textContent = "connected"; sendView(); sendVisible(); };
+  ws.onclose = () => { status.textContent = "disconnected"; setTimeout(connect, 1000); };
+  ws.onmessage = ev => { if (ev.data instanceof ArrayBuffer) drawFrame(ev.data); };
+}
+const send = m => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); };
+function sendVisible() { send({ t: "visible", v: document.visibilityState === "visible" }); }
+function sendView() {
+  const r = pad.getBoundingClientRect();
+  view.width = Math.round(r.width * devicePixelRatio);
+  view.height = Math.round(r.height * devicePixelRatio);
+  send({ t: "view", w: Math.round(r.width * zoom), h: Math.round(r.height * zoom) });
+}
+async function drawFrame(buf) {
+  const h = new DataView(buf, 0, 16);
+  const rx = h.getInt32(0), ry = h.getInt32(4), cx = h.getInt32(8), cy = h.getInt32(12);
+  try {
+    const img = await createImageBitmap(new Blob([buf.slice(16)], { type: "image/jpeg" }));
+    const W = view.width, H = view.height;
+    const s = Math.min(W / img.width, H / img.height);
+    const ox = (W - img.width * s) / 2, oy = (H - img.height * s) / 2;
+    ctx.fillStyle = "#1b1b1b"; ctx.fillRect(0, 0, W, H);
+    ctx.drawImage(img, ox, oy, img.width * s, img.height * s);
+    const px = ox + (cx - rx) * s, py = oy + (cy - ry) * s, rad = 14 * devicePixelRatio;
+    ctx.lineWidth = 5 * devicePixelRatio; ctx.strokeStyle = "rgba(0,0,0,.7)";
+    ctx.beginPath(); ctx.arc(px, py, rad, 0, 2 * Math.PI); ctx.stroke();
+    ctx.lineWidth = 2.5 * devicePixelRatio; ctx.strokeStyle = "#3d6";
+    ctx.beginPath(); ctx.arc(px, py, rad, 0, 2 * Math.PI); ctx.stroke();
+    img.close();
+  } finally {
+    send({ t: "ack" });
+  }
+}
+function showZoom() { zoombtn.textContent = zoom + "×"; }
+zoombtn.addEventListener("click", () => {
+  zoom = ZOOMS[(ZOOMS.indexOf(zoom) + 1) % ZOOMS.length];
+  try { localStorage.setItem("zoom", String(zoom)); } catch (_) {}
+  showZoom(); sendView();
+});
+showZoom();
+connect();
+
+const mods = new Set();
+document.querySelectorAll("[data-mod]").forEach(b => b.addEventListener("click", () => {
+  const k = b.dataset.mod;
+  mods.has(k) ? mods.delete(k) : mods.add(k);
+  b.classList.toggle("on", mods.has(k));
+}));
+function clearMods() { mods.clear(); document.querySelectorAll("[data-mod]").forEach(b => b.classList.remove("on")); }
+function sendKey(k) { send({ t: "keys", k: [...mods, k] }); clearMods(); }
+document.querySelectorAll("[data-key]").forEach(b => b.addEventListener("click", () => sendKey(b.dataset.key)));
+
+document.querySelectorAll("[data-btn]").forEach(b => {
+  b.addEventListener("pointerdown", ev => { ev.preventDefault(); b.classList.add("on"); send({ t: "button", b: b.dataset.btn, down: 1 }); });
+  const up = () => { if (!b.classList.contains("on")) return; b.classList.remove("on"); send({ t: "button", b: b.dataset.btn, down: 0 }); };
+  b.addEventListener("pointerup", up); b.addEventListener("pointercancel", up); b.addEventListener("pointerleave", up);
+});
+
+function click(b) {
+  if (mods.size) { send({ t: "keys", k: [...mods] }); }
+  send({ t: "button", b, down: 1 }); send({ t: "button", b, down: 0 });
+}
+
+const touches = new Map();
+let gesture = null, acc = { x: 0, y: 0, sx: 0, sy: 0 }, dragging = false, lastTapEnd = 0, maxFingers = 0;
+pad.addEventListener("touchstart", ev => {
+  ev.preventDefault();
+  for (const t of ev.changedTouches) touches.set(t.identifier, { x: t.clientX, y: t.clientY });
+  if (!gesture) {
+    gesture = { start: performance.now(), moved: 0 };
+    maxFingers = 0;
+    if (performance.now() - lastTapEnd < 250 && touches.size === 1) { dragging = true; send({ t: "button", b: "left", down: 1 }); }
+  }
+  maxFingers = Math.max(maxFingers, touches.size);
+}, { passive: false });
+pad.addEventListener("touchmove", ev => {
+  ev.preventDefault();
+  let dx = 0, dy = 0, n = 0;
+  for (const t of ev.changedTouches) {
+    const p = touches.get(t.identifier); if (!p) continue;
+    dx += t.clientX - p.x; dy += t.clientY - p.y; n++;
+    p.x = t.clientX; p.y = t.clientY;
+  }
+  if (!n) return;
+  dx /= n; dy /= n;
+  gesture.moved += Math.hypot(dx, dy);
+  if (touches.size >= 2) { acc.sx += dx * SCROLL; acc.sy += dy * SCROLL; }
+  else { const f = SENS * (1 + ACCEL * Math.hypot(dx, dy)); acc.x += dx * f; acc.y += dy * f; }
+}, { passive: false });
+function end(ev) {
+  ev.preventDefault();
+  for (const t of ev.changedTouches) touches.delete(t.identifier);
+  if (touches.size || !gesture) return;
+  const tap = performance.now() - gesture.start < TAP_MS && gesture.moved < TAP_PX;
+  if (dragging) { send({ t: "button", b: "left", down: 0 }); dragging = false; }
+  else if (tap) {
+    if (maxFingers >= 3) click("middle");
+    else if (maxFingers === 2) click("right");
+    else { click("left"); lastTapEnd = performance.now(); }
+  }
+  gesture = null;
+}
+pad.addEventListener("touchend", end, { passive: false });
+pad.addEventListener("touchcancel", end, { passive: false });
+
+(function flush() {
+  const mx = Math.trunc(acc.x), my = Math.trunc(acc.y);
+  if (mx || my) { send({ t: "move", dx: mx, dy: my }); acc.x -= mx; acc.y -= my; }
+  const sx = Math.trunc(acc.sx), sy = Math.trunc(acc.sy);
+  if (sx || sy) { send({ t: "scroll", dx: sx, dy: sy }); acc.sx -= sx; acc.sy -= sy; }
+  requestAnimationFrame(flush);
+})();
+
+const kbd = document.getElementById("kbd");
+let prev = "";
+document.getElementById("kbdbtn").addEventListener("click", () => {
+  if (document.activeElement === kbd) { kbd.blur(); return; }
+  kbd.value = ""; prev = ""; kbd.focus();
+});
+kbd.addEventListener("input", () => {
+  const now = kbd.value;
+  let i = 0;
+  while (i < prev.length && i < now.length && prev[i] === now[i]) i++;
+  for (let k = 0; k < prev.length - i; k++) send({ t: "keys", k: ["KEY_BACKSPACE"] });
+  const added = now.slice(i);
+  if (added) {
+    if (mods.size) { for (const ch of added) sendKey("KEY_" + ch.toUpperCase()); }
+    else send({ t: "text", s: added });
+  }
+  prev = now;
+  if (now.length > 64) { kbd.value = ""; prev = ""; }
+});
+kbd.addEventListener("keydown", ev => {
+  const special = { Enter: "KEY_ENTER", Backspace: "KEY_BACKSPACE", Tab: "KEY_TAB", Escape: "KEY_ESC" };
+  if (ev.key === "Enter" || (ev.key === "Backspace" && kbd.value === "")) {
+    ev.preventDefault(); sendKey(special[ev.key]); kbd.value = ""; prev = "";
+  }
+});
+
+function fit() { const v = visualViewport; document.body.style.height = v.height + "px"; scrollTo(0, 0); sendView(); }
+visualViewport.addEventListener("resize", fit); fit();
+history.pushState(null, "", location.href);
+addEventListener("popstate", () => history.pushState(null, "", location.href));
+async function wake() { try { await navigator.wakeLock.request("screen"); } catch (_) {} }
+wake(); document.addEventListener("visibilitychange", () => { sendVisible(); if (document.visibilityState === "visible") wake(); });
+</script>
+</body>
+</html>

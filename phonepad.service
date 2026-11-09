@@ -1,0 +1,12 @@
+[Unit]
+Description=phonepad: phone touchpad, keyboard and live view for this desktop, served over Tailscale
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+EnvironmentFile=%h/.config/phonepad/env
+ExecStart=/usr/bin/python3 %h/.local/share/phonepad/server.py 8765 ${PHONEPAD_LOGIN}
+Restart=on-failure
+
+[Install]
+WantedBy=graphical-session.target
