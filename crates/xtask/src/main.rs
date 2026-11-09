@@ -4,6 +4,7 @@ mod lexer;
 mod machine;
 mod mermaid;
 mod profile;
+mod report;
 mod views;
 mod workspace;
 

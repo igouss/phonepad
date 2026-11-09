@@ -1,3 +1,4 @@
+use crate::report::Report;
 use phonepad_h264::{AccessUnit, CaptureSurface, EncodeError, Encoder, Size, nal};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -26,17 +27,6 @@ const LINEAR: u64 = 0;
 const TIMED_ENCODES: usize = 300;
 const MAX_CPU_PER_FRAME: Duration = Duration::from_millis(5);
 const LATENCY_LIMIT: Duration = Duration::from_millis(17);
-
-struct Report {
-    passed: bool,
-}
-
-impl Report {
-    fn line(&mut self, gate: &str, ok: bool, detail: String) {
-        println!("{} {gate}: {detail}", if ok { "PASS" } else { "FAIL" });
-        self.passed &= ok;
-    }
-}
 
 fn screen() -> Vec<u8> {
     let width: usize = SOURCE.width as usize;
@@ -350,9 +340,9 @@ fn checks(report: &mut Report) -> Result<(), String> {
 }
 
 pub fn run() -> bool {
-    let mut report: Report = Report { passed: true };
+    let mut report: Report = Report::default();
     if let Err(error) = checks(&mut report) {
         report.line("h264-check", false, error);
     }
-    report.passed
+    report.passed()
 }
