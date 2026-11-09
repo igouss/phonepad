@@ -4,7 +4,7 @@ use std::os::fd::AsFd;
 use std::os::unix::fs::FileExt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
@@ -12,7 +12,7 @@ use phonepad_core::geometry::{Point, Region, Size, region_around};
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::fs::{MemfdFlags, memfd_create};
 use rustix::io::Errno;
-use tokio::sync::{broadcast, watch};
+use tokio::sync::watch;
 use wayland_client::backend::WaylandError;
 use wayland_client::protocol::wl_buffer::{self, WlBuffer};
 use wayland_client::protocol::wl_callback::{self, WlCallback};
@@ -28,106 +28,16 @@ use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::{
     self, ZwlrScreencopyManagerV1,
 };
 
+use super::format::channel_order;
+use super::{ChannelOrder, Frame, Frames};
 use crate::hypr;
 
 const IN_FLIGHT: usize = 4;
 const RETRY: Duration = Duration::from_millis(100);
-const CURSOR_SAMPLE_PERIOD: Duration = Duration::from_millis(5);
 const POLL_TIMEOUT: Timespec = Timespec {
     tv_sec: 0,
     tv_nsec: 100_000_000,
 };
-const SUPPORTED: [(wl_shm::Format, ChannelOrder); 4] = [
-    (wl_shm::Format::Argb8888, ChannelOrder::Bgra),
-    (wl_shm::Format::Xrgb8888, ChannelOrder::Bgra),
-    (wl_shm::Format::Abgr8888, ChannelOrder::Rgba),
-    (wl_shm::Format::Xbgr8888, ChannelOrder::Rgba),
-];
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ChannelOrder {
-    Bgra,
-    Rgba,
-}
-
-#[derive(Debug)]
-pub struct Frame {
-    pub origin: Point,
-    pub width: u32,
-    pub height: u32,
-    pub stride: u32,
-    pub order: ChannelOrder,
-    pub y_invert: bool,
-    pub pixels: Vec<u8>,
-}
-
-pub type Frames = broadcast::Sender<Arc<Frame>>;
-
-pub struct Capture {
-    stop: Arc<AtomicBool>,
-    thread: JoinHandle<()>,
-    sampler: JoinHandle<()>,
-}
-
-struct ExitNotice(Option<Box<dyn FnOnce() + Send>>);
-
-impl Drop for ExitNotice {
-    fn drop(&mut self) {
-        if let Some(notify) = self.0.take() {
-            notify();
-        }
-    }
-}
-
-impl Capture {
-    pub fn start(
-        view: watch::Receiver<Option<Size>>,
-        cursor: watch::Sender<Option<Point>>,
-        frames: Frames,
-        on_exit: Box<dyn FnOnce() + Send>,
-    ) -> Capture {
-        let stop: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
-        let stopped: Arc<AtomicBool> = Arc::clone(&stop);
-        let sampling: Arc<AtomicBool> = Arc::clone(&stop);
-        let cursor_seen: watch::Receiver<Option<Point>> = cursor.subscribe();
-        let sampler: JoinHandle<()> = thread::spawn(move || sample_cursor(&sampling, &cursor));
-        let thread: JoinHandle<()> = thread::spawn(move || {
-            let _notice: ExitNotice = ExitNotice(Some(on_exit));
-            if let Err(err) = run(&stopped, view, cursor_seen, frames) {
-                eprintln!("capture: {err:#}");
-            }
-        });
-        Capture {
-            stop,
-            thread,
-            sampler,
-        }
-    }
-
-    pub fn stop(self) -> [JoinHandle<()>; 2] {
-        self.stop.store(true, Ordering::Relaxed);
-        [self.thread, self.sampler]
-    }
-}
-
-fn sample_cursor(stop: &AtomicBool, cursor: &watch::Sender<Option<Point>>) {
-    let mut failing: bool = false;
-    while !stop.load(Ordering::Relaxed) {
-        match hypr::cursor() {
-            Ok(at) => {
-                cursor.send_replace(Some(at));
-                failing = false;
-            }
-            Err(err) => {
-                if !failing {
-                    eprintln!("cursor sample: {err:#}");
-                }
-                failing = true;
-            }
-        }
-        thread::sleep(CURSOR_SAMPLE_PERIOD);
-    }
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Layout {
@@ -176,7 +86,7 @@ struct State {
     fatal: Option<String>,
 }
 
-fn run(
+pub(super) fn run(
     stop: &AtomicBool,
     view: watch::Receiver<Option<Size>>,
     cursor: watch::Receiver<Option<Point>>,
@@ -386,13 +296,6 @@ impl State {
     }
 }
 
-fn channel_order(format: wl_shm::Format) -> Option<ChannelOrder> {
-    SUPPORTED
-        .iter()
-        .find(|(supported, _): &&(wl_shm::Format, ChannelOrder)| *supported == format)
-        .map(|(_, order): &(wl_shm::Format, ChannelOrder)| *order)
-}
-
 impl Dispatch<WlRegistry, ()> for State {
     fn event(
         state: &mut State,
@@ -567,31 +470,5 @@ impl Dispatch<ZwlrScreencopyManagerV1, ()> for State {
         _: &Connection,
         _: &QueueHandle<State>,
     ) {
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn xrgb_is_bgra_in_memory() {
-        assert_eq!(
-            channel_order(wl_shm::Format::Xrgb8888),
-            Some(ChannelOrder::Bgra)
-        );
-    }
-
-    #[test]
-    fn xbgr_is_rgba_in_memory() {
-        assert_eq!(
-            channel_order(wl_shm::Format::Xbgr8888),
-            Some(ChannelOrder::Rgba)
-        );
-    }
-
-    #[test]
-    fn packed_formats_are_unsupported() {
-        assert_eq!(channel_order(wl_shm::Format::Rgb565), None);
     }
 }
