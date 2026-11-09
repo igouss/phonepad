@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use phonepad_core::decision::Decision;
 use phonepad_core::wallpaper::{self, Wallpaper, WallpaperCommand, WallpaperEvent, WallpaperInput};
 use serde::Deserialize;
-use tokio::process::Command;
+
+use crate::tool;
 
 const MARKER_DIR: &str = "phonepad";
 const MARKER_FILE: &str = "wallpaper-paused";
@@ -102,20 +103,7 @@ impl WallpaperShell {
 }
 
 async fn owe(args: &[&str]) -> Result<Vec<u8>, String> {
-    let output: std::process::Output = Command::new("owe")
-        .args(args)
-        .output()
-        .await
-        .map_err(|err| format!("owe {args:?}: {err}"))?;
-    if output.status.success() {
-        Ok(output.stdout)
-    } else {
-        Err(format!(
-            "owe {args:?}: {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))
-    }
+    tool::run("owe", args).await
 }
 
 fn manual_pause(status: &[u8]) -> Result<bool, String> {

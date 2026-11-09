@@ -3,7 +3,6 @@ use std::time::Duration;
 use phonepad_core::decision::Decision;
 use phonepad_core::desk::{self, Desk, DeskCommand, DeskEvent, DeskInput, PointerSize};
 use phonepad_core::geometry::Point;
-use tokio::process::Command;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::{self, JoinHandle};
 use tokio::time::{self, Interval, MissedTickBehavior};
@@ -12,6 +11,7 @@ use crate::capture::{Capture, Feed};
 use crate::clock::Clock;
 use crate::hypr;
 use crate::owe::WallpaperShell;
+use crate::tool;
 
 const LOCAL_MOUSE_POLL: Duration = Duration::from_millis(100);
 const QUEUE: usize = 64;
@@ -238,29 +238,24 @@ async fn watch_local_mouse(inbox: mpsc::Sender<DeskMessage>, clock: Clock) {
 }
 
 async fn run(program: &str, args: &[&str]) {
-    match Command::new(program).args(args).output().await {
-        Ok(output) if output.status.success() => {}
-        Ok(output) => eprintln!(
-            "{program} {args:?}: {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ),
-        Err(err) => eprintln!("{program} {args:?}: {err}"),
+    if let Err(err) = tool::run(program, args).await {
+        eprintln!("{err}");
     }
 }
 
 pub async fn pointer_theme() -> String {
-    let theme: String = match Command::new("gsettings")
-        .args(["get", "org.gnome.desktop.interface", "cursor-theme"])
-        .output()
-        .await
+    let theme: String = match tool::run(
+        "gsettings",
+        &["get", "org.gnome.desktop.interface", "cursor-theme"],
+    )
+    .await
     {
-        Ok(output) => String::from_utf8_lossy(&output.stdout)
+        Ok(stdout) => String::from_utf8_lossy(&stdout)
             .trim()
             .trim_matches('\'')
             .to_owned(),
         Err(err) => {
-            eprintln!("gsettings get cursor-theme: {err}");
+            eprintln!("{err}");
             String::new()
         }
     };
