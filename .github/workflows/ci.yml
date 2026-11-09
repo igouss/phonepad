@@ -7,8 +7,11 @@ on:
 jobs:
   gates:
     runs-on: ubuntu-latest
+    container: archlinux:latest
     steps:
+      - run: pacman -Syu --noconfirm --needed base-devel git rustup clang pkgconf ffmpeg libva
       - uses: actions/checkout@v5
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: rustup show active-toolchain
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
