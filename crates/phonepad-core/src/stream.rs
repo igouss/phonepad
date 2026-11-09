@@ -124,11 +124,13 @@ pub fn evolve(state: Stream, event: &StreamEvent) -> Stream {
 
 pub fn all_states() -> Vec<Stream> {
     std::iter::once(Stream::Hidden)
-        .chain((0..=MAX_IN_FLIGHT).flat_map(|in_flight: u8| {
-            [false, true].map(|frame_pending: bool| Stream::Streaming {
-                in_flight,
-                frame_pending,
-            })
+        .chain((0..=MAX_IN_FLIGHT).map(|in_flight: u8| Stream::Streaming {
+            in_flight,
+            frame_pending: false,
+        }))
+        .chain(std::iter::once(Stream::Streaming {
+            in_flight: MAX_IN_FLIGHT,
+            frame_pending: true,
         }))
         .collect()
 }
@@ -199,21 +201,43 @@ mod tests {
     }
 
     #[test]
-    fn all_states_lists_hidden_then_every_streaming_combination() {
+    fn all_states_lists_hidden_then_every_reachable_streaming_state() {
         assert_eq!(
             all_states(),
             vec![
                 Stream::Hidden,
                 streaming(0, false),
-                streaming(0, true),
                 streaming(1, false),
-                streaming(1, true),
                 streaming(2, false),
-                streaming(2, true),
                 streaming(3, false),
-                streaming(3, true),
                 streaming(4, false),
                 streaming(4, true),
+            ]
+        );
+    }
+
+    fn reached(inputs: &[StreamInput]) -> Stream {
+        inputs
+            .iter()
+            .fold(Stream::Hidden, |state: Stream, input: &StreamInput| {
+                decide(&state, *input).events.iter().fold(state, evolve)
+            })
+    }
+
+    #[test]
+    fn every_listed_state_is_reachable_from_hidden() {
+        let shown: StreamInput = StreamInput::Visibility(true);
+        let frame: StreamInput = StreamInput::FrameReady;
+        assert_eq!(
+            all_states(),
+            vec![
+                reached(&[]),
+                reached(&[shown]),
+                reached(&[shown, frame]),
+                reached(&[shown, frame, frame]),
+                reached(&[shown, frame, frame, frame]),
+                reached(&[shown, frame, frame, frame, frame]),
+                reached(&[shown, frame, frame, frame, frame, frame]),
             ]
         );
     }
