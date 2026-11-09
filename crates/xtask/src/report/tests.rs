@@ -29,3 +29,14 @@ fn a_failure_before_a_pass_fails_the_report() {
     report.line("second", true, String::from("fine"));
     assert!(!report.passed());
 }
+
+#[test]
+fn a_recorded_failing_check_fails_the_report() {
+    let mut report: Report = Report::default();
+    report.record(super::Check {
+        gate: String::from("gate"),
+        ok: false,
+        detail: String::from("broken"),
+    });
+    assert!(!report.passed());
+}

@@ -7,6 +7,7 @@ edition.workspace = true
 phonepad-core = { path = "../phonepad-core" }
 phonepad-h264 = { path = "../phonepad-h264" }
 serde_json = "1"
+tungstenite = "0.29"
 
 [lints]
 workspace = true

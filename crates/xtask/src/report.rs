@@ -1,3 +1,10 @@
+#[derive(Debug, PartialEq, Eq)]
+pub struct Check {
+    pub gate: String,
+    pub ok: bool,
+    pub detail: String,
+}
+
 pub struct Report {
     passed: bool,
 }
@@ -12,6 +19,10 @@ impl Report {
     pub fn line(&mut self, gate: &str, ok: bool, detail: String) {
         println!("{}", line(gate, ok, &detail));
         self.passed &= ok;
+    }
+
+    pub fn record(&mut self, check: Check) {
+        self.line(&check.gate, check.ok, check.detail);
     }
 
     pub fn passed(&self) -> bool {

@@ -1155,6 +1155,7 @@ dependencies = [
  "phonepad-core",
  "phonepad-h264",
  "serde_json",
+ "tungstenite",
 ]
 
 [[package]]

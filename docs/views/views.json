@@ -80,6 +80,10 @@
       {
         "from": "c_xtask",
         "to": "c_serde_json_1_0_154"
+      },
+      {
+        "from": "c_xtask",
+        "to": "c_tungstenite_0_29_0"
       }
     ],
     "nodes": [
@@ -156,6 +160,11 @@
         "id": "c_tokio_1_54_1",
         "kind": "external",
         "label": "tokio 1.54.1"
+      },
+      {
+        "id": "c_tungstenite_0_29_0",
+        "kind": "external",
+        "label": "tungstenite 0.29.0"
       },
       {
         "id": "c_wayland_client_0_31_15",

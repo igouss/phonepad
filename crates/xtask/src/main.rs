@@ -1,3 +1,4 @@
+mod e2e;
 mod gates;
 mod h264_check;
 mod lexer;
@@ -13,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use views::VIEWS_DIR;
 
-const USAGE: &str = "usage: cargo xtask views [--root <dir>] [--out <dir>]\n       cargo xtask check [--root <dir>]\n       cargo xtask h264-check   (needs the Intel iGPU at /dev/dri/renderD128 and the ffmpeg CLI)\n       target/debug/xtask profile <pid> <seconds> [--root <dir>]\n         (run the binary directly: a cargo runner with its own PID namespace hides host processes)";
+const USAGE: &str = "usage: cargo xtask views [--root <dir>] [--out <dir>]\n       cargo xtask check [--root <dir>]\n       cargo xtask h264-check   (needs the Intel iGPU at /dev/dri/renderD128 and the ffmpeg CLI)\n       cargo xtask e2e [--bin <phonepad>]   (needs a live Hyprland session, the iGPU, /dev/uinput and the ffmpeg CLI; serves on port 8769)\n       target/debug/xtask profile <pid> <seconds> [--root <dir>]\n         (run the binary directly: a cargo runner with its own PID namespace hides host processes)";
 
 #[derive(Debug, PartialEq, Eq)]
 enum Task {
@@ -30,12 +31,16 @@ enum Task {
         seconds: u32,
     },
     H264Check,
+    E2e {
+        bin: Option<PathBuf>,
+    },
 }
 
 struct Args {
     positional: Vec<String>,
     root: Option<PathBuf>,
     out: Option<PathBuf>,
+    bin: Option<PathBuf>,
 }
 
 fn split(args: &[String]) -> Result<Args, String> {
@@ -43,6 +48,7 @@ fn split(args: &[String]) -> Result<Args, String> {
         positional: Vec::new(),
         root: None,
         out: None,
+        bin: None,
     };
     let mut rest: std::slice::Iter<String> = args.iter();
     while let Some(arg) = rest.next() {
@@ -54,6 +60,11 @@ fn split(args: &[String]) -> Result<Args, String> {
             }
             "--out" => {
                 parsed.out = Some(PathBuf::from(rest.next().ok_or("--out needs a directory")?))
+            }
+            "--bin" => {
+                parsed.bin = Some(PathBuf::from(
+                    rest.next().ok_or("--bin needs a phonepad binary")?,
+                ))
             }
             flag if flag.starts_with("--") => return Err(format!("unknown option {flag}")),
             word => parsed.positional.push(word.to_string()),
@@ -72,13 +83,15 @@ fn parse(args: &[String]) -> Result<Task, String> {
         positional,
         root,
         out,
+        bin,
     } = split(args)?;
     let words: Vec<&str> = positional.iter().map(String::as_str).collect();
-    match (words.as_slice(), out) {
-        (["views"], out) => Ok(Task::Views { root, out }),
-        (["check"], None) => Ok(Task::Check { root }),
-        (["h264-check"], None) if root.is_none() => Ok(Task::H264Check),
-        (["profile", pid, seconds], None) => Ok(Task::Profile {
+    match (words.as_slice(), out, bin) {
+        (["views"], out, None) => Ok(Task::Views { root, out }),
+        (["check"], None, None) => Ok(Task::Check { root }),
+        (["h264-check"], None, None) if root.is_none() => Ok(Task::H264Check),
+        (["e2e"], None, bin) if root.is_none() => Ok(Task::E2e { bin }),
+        (["profile", pid, seconds], None, None) => Ok(Task::Profile {
             root,
             pid: number(pid, "pid")?,
             seconds: number(seconds, "seconds")?,
@@ -124,6 +137,7 @@ fn run(task: Task) -> Result<bool, String> {
             Ok(true)
         }
         Task::H264Check => Ok(h264_check::run()),
+        Task::E2e { bin } => Ok(e2e::run(bin)),
     }
 }
 
@@ -199,6 +213,39 @@ mod tests {
     #[test]
     fn h264_check_rejects_a_root() {
         assert!(parse(&args("h264-check --root /w")).is_err());
+    }
+
+    #[test]
+    fn e2e_builds_its_own_binary_by_default() {
+        assert_eq!(parse(&args("e2e")), Ok(Task::E2e { bin: None }));
+    }
+
+    #[test]
+    fn e2e_takes_a_binary() {
+        assert_eq!(
+            parse(&args("e2e --bin /b/phonepad")),
+            Ok(Task::E2e {
+                bin: Some(PathBuf::from("/b/phonepad"))
+            })
+        );
+    }
+
+    #[test]
+    fn e2e_rejects_a_root() {
+        assert!(parse(&args("e2e --root /w")).is_err());
+    }
+
+    #[test]
+    fn bin_without_a_path_is_rejected() {
+        assert_eq!(
+            parse(&args("e2e --bin")),
+            Err(String::from("--bin needs a phonepad binary"))
+        );
+    }
+
+    #[test]
+    fn only_e2e_takes_a_binary() {
+        assert!(parse(&args("check --bin /b/phonepad")).is_err());
     }
 
     #[test]
