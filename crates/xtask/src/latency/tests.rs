@@ -1,4 +1,4 @@
-use super::{DEFAULT_PORT, Phase, calibration, link, phases, plan, runtime_name};
+use super::{DEFAULT_PORT, Phase, Sample, acked, calibration, link, phases, plan, runtime_name};
 
 #[test]
 fn calibration_adds_100_and_200_ms_to_a_bare_link_then_caps_it_at_2_mbit() {
@@ -72,4 +72,34 @@ fn the_emulator_known_case_has_no_content_rate() {
             .collect::<Vec<Option<u32>>>()),
         Ok(vec![None, None, None, None])
     );
+}
+
+fn unit(id: u32) -> Sample {
+    Sample::Unit {
+        id,
+        bytes: 100,
+        capture_send: 1.0,
+        send_ack: 1.0,
+    }
+}
+
+const DRAWN: Sample = Sample::Drawn {
+    decode: 0.0,
+    draw: 0.0,
+    gap: None,
+};
+
+#[test]
+fn no_samples_ack_nothing() {
+    assert_eq!(acked(&[]), Vec::<u32>::new());
+}
+
+#[test]
+fn one_unit_acks_its_id() {
+    assert_eq!(acked(&[unit(7)]), vec![7]);
+}
+
+#[test]
+fn many_units_ack_their_ids_in_order_and_draws_ack_nothing() {
+    assert_eq!(acked(&[unit(3), DRAWN, unit(4), unit(9)]), vec![3, 4, 9]);
 }

@@ -117,3 +117,6 @@ impl Desk {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

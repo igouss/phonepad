@@ -121,8 +121,8 @@ fn changed_frames_are_named_by_id() {
 #[test]
 fn only_acked_changes_count_per_second() {
     assert_eq!(
-        per_second(&ids(&[2, 3, 9]), &[1, 2, 3, 4], Duration::from_secs(2)),
-        1.0
+        per_second(&ids(&[2, 3, 4, 9]), &[1, 2, 3, 4], Duration::from_secs(2)),
+        1.5
     );
 }
 
