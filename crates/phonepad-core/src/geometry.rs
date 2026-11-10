@@ -98,6 +98,46 @@ pub fn region_around(cursor: Point, view: Size, monitors: &[Monitor]) -> Option<
     })
 }
 
+pub const WINDOW_MARGIN_PERCENT: u32 = 25;
+
+pub fn window_around(
+    cursor: Point,
+    view: Size,
+    monitors: &[Monitor],
+    kept: Option<&Region>,
+) -> Option<Region> {
+    let fresh: Region = region_around(cursor, grown(view), monitors)?;
+    let seen: Region = region_around(cursor, view, monitors)?;
+    match kept {
+        Some(window) if window.size == fresh.size && holds(window, &seen) => Some(window.clone()),
+        Some(_) | None => Some(fresh),
+    }
+}
+
+fn grown(view: Size) -> Size {
+    let side = |len: NonZeroU32| -> NonZeroU32 {
+        let margin: u32 = len.get() / 100 * WINDOW_MARGIN_PERCENT * 2
+            + len.get() % 100 * WINDOW_MARGIN_PERCENT * 2 / 100;
+        len.saturating_add(margin)
+    };
+    Size {
+        w: side(view.w),
+        h: side(view.h),
+    }
+}
+
+fn holds(outer: &Region, inner: &Region) -> bool {
+    let spans = |start: i32, len: NonZeroU32, inner_start: i32, inner_len: NonZeroU32| -> bool {
+        let start: i64 = i64::from(start);
+        let inner_start: i64 = i64::from(inner_start);
+        start <= inner_start
+            && inner_start + i64::from(inner_len.get()) <= start + i64::from(len.get())
+    };
+    outer.output == inner.output
+        && spans(outer.global.x, outer.size.w, inner.global.x, inner.size.w)
+        && spans(outer.global.y, outer.size.h, inner.global.y, inner.size.h)
+}
+
 fn even_within(wanted: NonZeroU32, limit: NonZeroU32) -> Option<NonZeroU32> {
     NonZeroU32::new(wanted.get().max(2).min(limit.get()) & !1)
 }
@@ -393,6 +433,137 @@ mod tests {
             region_around(Point { x: 1920, y: 1640 }, VIEW, &two_monitors()),
             region("A", (1280, 600), (1280, 600), 640, 480)
         );
+    }
+
+    const SMALL: Size = Size {
+        w: NonZeroU32::new(400).unwrap(),
+        h: NonZeroU32::new(200).unwrap(),
+    };
+
+    fn wide() -> Vec<Monitor> {
+        vec![monitor("A", 0, 0, 2560, 1440)]
+    }
+
+    #[test]
+    fn a_view_grows_by_a_quarter_on_each_side() {
+        assert_eq!(grown(SMALL), size(600, 300));
+    }
+
+    #[test]
+    fn growth_keeps_the_remainder_of_a_hundred() {
+        assert_eq!(grown(size(150, 1)), size(225, 1));
+    }
+
+    #[test]
+    fn growth_saturates_instead_of_wrapping() {
+        assert_eq!(grown(size(u32::MAX, 2)), size(u32::MAX, 3));
+    }
+
+    #[test]
+    fn no_window_was_kept_so_one_is_centred_on_the_cursor() {
+        assert_eq!(
+            window_around(Point { x: 1000, y: 700 }, SMALL, &wide(), None),
+            region("A", (700, 550), (700, 550), 600, 300)
+        );
+    }
+
+    #[test]
+    fn a_kept_window_that_still_holds_the_view_is_kept() {
+        let kept: Option<Region> = region("A", (700, 550), (700, 550), 600, 300);
+        assert_eq!(
+            window_around(Point { x: 1090, y: 740 }, SMALL, &wide(), kept.as_ref()),
+            kept
+        );
+    }
+
+    #[test]
+    fn a_view_touching_the_kept_window_edge_keeps_it() {
+        let kept: Option<Region> = region("A", (700, 550), (700, 550), 600, 300);
+        assert_eq!(
+            window_around(Point { x: 1100, y: 750 }, SMALL, &wide(), kept.as_ref()),
+            kept
+        );
+    }
+
+    #[test]
+    fn a_view_one_pixel_past_the_right_edge_recentres() {
+        let kept: Option<Region> = region("A", (700, 550), (700, 550), 600, 300);
+        assert_eq!(
+            window_around(Point { x: 1101, y: 700 }, SMALL, &wide(), kept.as_ref()),
+            region("A", (801, 550), (801, 550), 600, 300)
+        );
+    }
+
+    #[test]
+    fn a_view_one_pixel_past_the_left_edge_recentres() {
+        let kept: Option<Region> = region("A", (700, 550), (700, 550), 600, 300);
+        assert_eq!(
+            window_around(Point { x: 899, y: 700 }, SMALL, &wide(), kept.as_ref()),
+            region("A", (599, 550), (599, 550), 600, 300)
+        );
+    }
+
+    #[test]
+    fn a_view_one_pixel_past_the_top_edge_recentres() {
+        let kept: Option<Region> = region("A", (700, 550), (700, 550), 600, 300);
+        assert_eq!(
+            window_around(Point { x: 1000, y: 649 }, SMALL, &wide(), kept.as_ref()),
+            region("A", (700, 499), (700, 499), 600, 300)
+        );
+    }
+
+    #[test]
+    fn a_view_one_pixel_past_the_bottom_edge_recentres() {
+        let kept: Option<Region> = region("A", (700, 550), (700, 550), 600, 300);
+        assert_eq!(
+            window_around(Point { x: 1000, y: 751 }, SMALL, &wide(), kept.as_ref()),
+            region("A", (700, 601), (700, 601), 600, 300)
+        );
+    }
+
+    #[test]
+    fn a_kept_window_of_another_size_is_replaced() {
+        let kept: Option<Region> = region("A", (700, 550), (700, 550), 602, 300);
+        assert_eq!(
+            window_around(Point { x: 1000, y: 700 }, SMALL, &wide(), kept.as_ref()),
+            region("A", (700, 550), (700, 550), 600, 300)
+        );
+    }
+
+    #[test]
+    fn a_kept_window_on_another_monitor_is_replaced() {
+        let kept: Option<Region> = region("A", (1280, 600), (1280, 600), 600, 300);
+        assert_eq!(
+            window_around(
+                Point { x: 3000, y: 900 },
+                SMALL,
+                &two_monitors(),
+                kept.as_ref()
+            ),
+            region("B", (2700, 750), (780, 550), 600, 300)
+        );
+    }
+
+    #[test]
+    fn a_window_at_the_monitor_corner_holds_the_clamped_view() {
+        let kept: Option<Region> = region("A", (0, 0), (0, 0), 600, 300);
+        assert_eq!(
+            window_around(Point { x: 5, y: 5 }, SMALL, &wide(), kept.as_ref()),
+            kept
+        );
+    }
+
+    #[test]
+    fn a_view_larger_than_the_monitor_gives_the_whole_monitor() {
+        assert_eq!(
+            window_around(Point { x: 1000, y: 700 }, size(2400, 1300), &wide(), None),
+            region("A", (0, 0), (0, 0), 2560, 1440)
+        );
+    }
+
+    #[test]
+    fn no_monitor_gives_no_window() {
+        assert_eq!(window_around(Point { x: 0, y: 0 }, SMALL, &[], None), None);
     }
 
     #[test]
