@@ -61,6 +61,7 @@ struct Pool {
     new_frame: bool,
     shown: Option<Shot>,
     encoded_at: Option<Instant>,
+    keyframe_at: Option<Instant>,
 }
 
 struct NamedOutput {
@@ -235,6 +236,7 @@ impl Pool {
             new_frame: false,
             shown: None,
             encoded_at: None,
+            keyframe_at: None,
         })
     }
 }
@@ -335,7 +337,10 @@ impl State {
         };
         let pending: Pending = Pending {
             new_frame: pool.new_frame,
-            keyframe: self.keyframe.pending(),
+            keyframe: plan::keyframe_due(
+                self.keyframe.pending(),
+                pool.keyframe_at.map(|at: Instant| at.elapsed()),
+            ),
             encoder_busy: pool.lane.busy(),
         };
         let since_last: Option<Duration> = pool.encoded_at.map(|at: Instant| at.elapsed());
@@ -349,12 +354,15 @@ impl State {
                     .context("crop")?;
                 pool.lane.submit(Job {
                     cropped,
-                    keyframe: self.keyframe.take(),
+                    keyframe: pending.keyframe && self.keyframe.take(),
                     shot: wanted,
                 })?;
                 pool.new_frame = false;
                 pool.shown = Some(wanted);
                 pool.encoded_at = Some(Instant::now());
+                if pending.keyframe || pool.keyframe_at.is_none() {
+                    pool.keyframe_at = pool.encoded_at;
+                }
                 Ok(WAKE)
             }
         }

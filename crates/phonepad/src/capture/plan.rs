@@ -3,6 +3,7 @@ use std::time::Duration;
 use phonepad_core::geometry::{Monitor, Point, Region, Size, window_around};
 
 pub(super) const MIN_ENCODE_INTERVAL: Duration = Duration::from_micros(16_667);
+pub(super) const MIN_KEYFRAME_INTERVAL: Duration = Duration::from_millis(500);
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,6 +105,10 @@ pub(super) fn target(
         },
         window,
     })
+}
+
+pub(super) fn keyframe_due(requested: bool, since_keyframe: Option<Duration>) -> bool {
+    requested && since_keyframe.is_none_or(|elapsed: Duration| elapsed >= MIN_KEYFRAME_INTERVAL)
 }
 
 pub(super) fn copy_mode(holds_a_frame: bool) -> CopyMode {
@@ -340,6 +345,34 @@ mod tests {
                 window: Point { x: 520, y: 140 },
             })
         );
+    }
+
+    #[test]
+    fn no_request_is_no_keyframe() {
+        assert!(!keyframe_due(false, None));
+    }
+
+    #[test]
+    fn a_request_before_any_keyframe_is_due() {
+        assert!(keyframe_due(true, None));
+    }
+
+    #[test]
+    fn a_request_just_inside_the_interval_waits() {
+        assert!(!keyframe_due(
+            true,
+            Some(MIN_KEYFRAME_INTERVAL - Duration::from_millis(1))
+        ));
+    }
+
+    #[test]
+    fn a_request_one_interval_after_the_last_keyframe_is_due() {
+        assert!(keyframe_due(true, Some(MIN_KEYFRAME_INTERVAL)));
+    }
+
+    #[test]
+    fn no_request_long_after_a_keyframe_is_no_keyframe() {
+        assert!(!keyframe_due(false, Some(Duration::from_secs(10))));
     }
 
     #[test]
