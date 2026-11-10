@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
 
-use phonepad_core::stream::UnitKind;
+use phonepad_core::stream::{self, UnitKind};
 use serde::Serialize;
 
-pub const KEPT: usize = 32;
+pub const KEPT: usize = stream::MAX_UNITS;
 const NANOS_PER_MILLI: f64 = 1_000_000.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

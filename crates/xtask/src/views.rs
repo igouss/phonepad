@@ -1,6 +1,7 @@
 use crate::machine::{Labels, Machine, Transition, explore};
 use crate::mermaid::{Ids, escape_label};
 use crate::workspace::{Member, Package, Workspace};
+use phonepad_core::stream::{Stream, StreamInput};
 use phonepad_core::{desk, stream, wallpaper};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -11,6 +12,21 @@ pub const VIEWS_DIR: &str = "docs/views";
 
 pub type Files = BTreeMap<String, String>;
 
+fn stream_phase(state: &Stream) -> String {
+    format!("{:?}", stream::phase(state))
+}
+
+fn stream_input(input: &StreamInput) -> String {
+    match input {
+        StreamInput::Visibility(visible) => format!("Visibility({visible})"),
+        StreamInput::UnitReady(offer) => {
+            format!("UnitReady({:?}, {} B)", offer.kind, offer.unit.bytes)
+        }
+        StreamInput::Missed => String::from("Missed"),
+        StreamInput::Ack { id, .. } => format!("Ack({id})"),
+    }
+}
+
 pub fn machines() -> BTreeMap<String, Machine> {
     BTreeMap::from([
         (
@@ -20,7 +36,10 @@ pub fn machines() -> BTreeMap<String, Machine> {
                 stream::all_inputs(),
                 stream::decide,
                 stream::evolve,
-                Labels::debug(),
+                Labels {
+                    state: stream_phase,
+                    input: stream_input,
+                },
             ),
         ),
         (
@@ -271,9 +290,10 @@ fn machine_value(machine: &Machine) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{Files, render};
+    use super::{Files, render, stream_input, stream_phase};
     use crate::machine::{Machine, State, Transition};
     use crate::workspace::{Member, Package, Workspace};
+    use phonepad_core::stream::{Offer, Sent, Stream, StreamInput, UnitKind};
     use std::collections::{BTreeMap, BTreeSet};
 
     fn package(name: &str, version: &str) -> Package {
@@ -373,6 +393,37 @@ mod tests {
         assert_eq!(
             files.keys().cloned().collect::<Vec<String>>(),
             vec![String::from("crate-graph.mmd"), String::from("views.json")]
+        );
+    }
+
+    #[test]
+    fn a_stream_state_is_drawn_as_its_phase() {
+        assert_eq!(stream_phase(&Stream::Hidden), "Hidden");
+    }
+
+    #[test]
+    fn stream_inputs_are_drawn_without_their_clock() {
+        assert_eq!(
+            [
+                StreamInput::Visibility(true),
+                StreamInput::UnitReady(Offer {
+                    kind: UnitKind::Delta,
+                    unit: Sent {
+                        id: 3,
+                        bytes: 1000,
+                        at_us: 7
+                    }
+                }),
+                StreamInput::Missed,
+                StreamInput::Ack { id: 2, at_us: 9 }
+            ]
+            .map(|input: StreamInput| stream_input(&input)),
+            [
+                String::from("Visibility(true)"),
+                String::from("UnitReady(Delta, 1000 B)"),
+                String::from("Missed"),
+                String::from("Ack(2)")
+            ]
         );
     }
 }

@@ -5,7 +5,7 @@ use phonepad_core::decision::Decision;
 use phonepad_core::desk::DeskInput;
 use phonepad_core::geometry::{Point, Size};
 use phonepad_core::input::InputCommand;
-use phonepad_core::stream::{self, Stream, StreamCommand, StreamEvent, StreamInput};
+use phonepad_core::stream::{self, Offer, Stream, StreamCommand, StreamEvent, StreamInput};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{broadcast, mpsc, watch};
 
@@ -94,15 +94,28 @@ fn effects(message: PhoneMessage, at_ms: u64) -> Vec<Effect> {
         ],
         PhoneMessage::Visible(visible) => vec![Effect::Stream(StreamInput::Visibility(visible))],
         PhoneMessage::View(size) => vec![Effect::SetView(size)],
-        PhoneMessage::Ack(id) => vec![Effect::Acked(id), Effect::Stream(StreamInput::Ack)],
+        PhoneMessage::Ack(id) => vec![Effect::Acked(id)],
         PhoneMessage::Drawn(drawn) => vec![Effect::Drawn(drawn)],
         PhoneMessage::Key => vec![Effect::Stream(StreamInput::Missed)],
     }
 }
 
-fn unit_input(received: &Result<Unit, RecvError>) -> Option<StreamInput> {
+const NANOS_PER_MICRO: u64 = 1000;
+
+fn micros(at_ns: u64) -> u64 {
+    at_ns / NANOS_PER_MICRO
+}
+
+fn unit_input(received: &Result<Unit, RecvError>, at_us: u64) -> Option<StreamInput> {
     match received {
-        Ok(unit) => Some(StreamInput::UnitReady(unit.kind)),
+        Ok(unit) => Some(StreamInput::UnitReady(Offer {
+            kind: unit.kind,
+            unit: stream::Sent {
+                id: unit.id,
+                bytes: u32::try_from(unit.message.len()).unwrap_or(u32::MAX),
+                at_us,
+            },
+        })),
         Err(RecvError::Lagged(_)) => Some(StreamInput::Missed),
         Err(RecvError::Closed) => None,
     }
@@ -118,7 +131,7 @@ impl Session {
                     Some(Ok(Message::Close(_))) | None => return Ok(()),
                     Some(Err(err)) => return Err(err.into()),
                 },
-                received = next_unit(&mut self.units) => match unit_input(&received) {
+                received = next_unit(&mut self.units) => match unit_input(&received, micros(clock::monotonic_ns())) {
                     Some(input) => self.step(input, received.as_ref().ok()).await?,
                     None => return Err(anyhow!("capture feed closed")),
                 },
@@ -157,8 +170,17 @@ impl Session {
                 Ok(())
             }
             Effect::Acked(id) => {
-                let record: Option<Record> = self.ledger.acked(id, clock::monotonic_ns());
-                record.map_or(Ok(()), |record: Record| self.print(&record))
+                let at_ns: u64 = clock::monotonic_ns();
+                let record: Option<Record> = self.ledger.acked(id, at_ns);
+                record.map_or(Ok(()), |record: Record| self.print(&record))?;
+                self.step(
+                    StreamInput::Ack {
+                        id,
+                        at_us: micros(at_ns),
+                    },
+                    None,
+                )
+                .await
             }
             Effect::Drawn(drawn) => {
                 let record: Record = self.ledger.drawn(drawn);
@@ -169,7 +191,10 @@ impl Session {
 
     async fn step(&mut self, input: StreamInput, unit: Option<&Unit>) -> anyhow::Result<()> {
         let decision: Decision<StreamEvent, StreamCommand> = stream::decide(&self.stream, input);
-        self.stream = decision.events.iter().fold(self.stream, stream::evolve);
+        self.stream = decision.events.iter().fold(
+            std::mem::replace(&mut self.stream, Stream::Hidden),
+            stream::evolve,
+        );
         for command in decision.commands {
             self.execute(command, unit).await?;
         }

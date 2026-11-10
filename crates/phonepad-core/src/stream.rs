@@ -1,35 +1,16 @@
+mod pipe;
+
 use crate::decision::Decision;
+pub use pipe::{
+    CEILING_BYTES, FLOOR_BYTES, MAX_UNITS, MIN_RTT_WINDOW_US, Occupancy, Pipe, QUEUE_CAP_US,
+    RATE_WINDOW_US, Sent,
+};
 
-pub const MAX_IN_FLIGHT: u8 = 4;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct InFlight(u8);
-
-impl InFlight {
-    const NONE: InFlight = InFlight(0);
-
-    fn has_credit(self) -> bool {
-        self.0 < MAX_IN_FLIGHT
-    }
-
-    fn is_empty(self) -> bool {
-        self.0 == 0
-    }
-
-    fn sent(self) -> InFlight {
-        InFlight(self.0.saturating_add(1).min(MAX_IN_FLIGHT))
-    }
-
-    fn acked(self) -> InFlight {
-        InFlight(self.0.saturating_sub(1))
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stream {
     Hidden,
-    Unsynced { in_flight: InFlight },
-    Synced { in_flight: InFlight },
+    Unsynced { pipe: Pipe },
+    Synced { pipe: Pipe },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,21 +20,27 @@ pub enum UnitKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Offer {
+    pub kind: UnitKind,
+    pub unit: Sent,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StreamInput {
     Visibility(bool),
-    UnitReady(UnitKind),
+    UnitReady(Offer),
     Missed,
-    Ack,
+    Ack { id: u32, at_us: u64 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StreamEvent {
     Shown,
     Hid,
-    KeyframeSent,
-    DeltaSent,
+    KeyframeSent(Sent),
+    DeltaSent(Sent),
     Desynced,
-    Acked,
+    Acked { id: u32, at_us: u64 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,8 +51,15 @@ pub enum StreamCommand {
     RequestKeyframe,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phase {
+    Hidden,
+    Unsynced(Occupancy),
+    Synced(Occupancy),
+}
+
 pub fn decide(state: &Stream, input: StreamInput) -> Decision<StreamEvent, StreamCommand> {
-    match (*state, input) {
+    match (state, input) {
         (Stream::Hidden, StreamInput::Visibility(true)) => decision(
             StreamEvent::Shown,
             vec![StreamCommand::JoinViewers, StreamCommand::RequestKeyframe],
@@ -73,50 +67,54 @@ pub fn decide(state: &Stream, input: StreamInput) -> Decision<StreamEvent, Strea
         (Stream::Unsynced { .. } | Stream::Synced { .. }, StreamInput::Visibility(false)) => {
             decision(StreamEvent::Hid, vec![StreamCommand::LeaveViewers])
         }
-        (Stream::Unsynced { in_flight }, StreamInput::UnitReady(kind)) => {
-            unsynced_unit(in_flight, kind)
+        (Stream::Unsynced { pipe }, StreamInput::UnitReady(offer)) => unsynced_unit(pipe, offer),
+        (Stream::Synced { pipe }, StreamInput::UnitReady(offer)) => synced_unit(pipe, offer),
+        (Stream::Unsynced { pipe } | Stream::Synced { pipe }, StreamInput::Missed) => {
+            decision(StreamEvent::Desynced, keyframe_if(pipe.is_empty()))
         }
-        (Stream::Synced { in_flight }, StreamInput::UnitReady(kind)) => {
-            synced_unit(in_flight, kind)
+        (Stream::Unsynced { pipe }, StreamInput::Ack { id, at_us }) if pipe.carries(id) => {
+            decision(
+                StreamEvent::Acked { id, at_us },
+                keyframe_if(pipe.ends_with(id)),
+            )
         }
-        (Stream::Unsynced { in_flight } | Stream::Synced { in_flight }, StreamInput::Missed) => {
-            decision(StreamEvent::Desynced, keyframe_if(in_flight.has_credit()))
-        }
-        (Stream::Unsynced { in_flight }, StreamInput::Ack) if !in_flight.is_empty() => {
-            decision(StreamEvent::Acked, keyframe_if(!in_flight.has_credit()))
-        }
-        (Stream::Synced { in_flight }, StreamInput::Ack) if !in_flight.is_empty() => {
-            decision(StreamEvent::Acked, Vec::new())
+        (Stream::Synced { pipe }, StreamInput::Ack { id, at_us }) if pipe.carries(id) => {
+            decision(StreamEvent::Acked { id, at_us }, Vec::new())
         }
         (
             Stream::Hidden,
             StreamInput::Visibility(false)
             | StreamInput::UnitReady(_)
             | StreamInput::Missed
-            | StreamInput::Ack,
+            | StreamInput::Ack { .. },
         )
         | (
             Stream::Unsynced { .. } | Stream::Synced { .. },
-            StreamInput::Visibility(true) | StreamInput::Ack,
+            StreamInput::Visibility(true) | StreamInput::Ack { .. },
         ) => Decision::none(),
     }
 }
 
-fn unsynced_unit(in_flight: InFlight, kind: UnitKind) -> Decision<StreamEvent, StreamCommand> {
-    match (kind, in_flight.has_credit()) {
-        (UnitKind::Keyframe, true) => {
-            decision(StreamEvent::KeyframeSent, vec![StreamCommand::SendUnit])
-        }
+fn unsynced_unit(pipe: &Pipe, offer: Offer) -> Decision<StreamEvent, StreamCommand> {
+    match (offer.kind, pipe.admits(offer.unit.bytes)) {
+        (UnitKind::Keyframe, true) => decision(
+            StreamEvent::KeyframeSent(offer.unit),
+            vec![StreamCommand::SendUnit],
+        ),
         (UnitKind::Keyframe, false) | (UnitKind::Delta, true | false) => Decision::none(),
     }
 }
 
-fn synced_unit(in_flight: InFlight, kind: UnitKind) -> Decision<StreamEvent, StreamCommand> {
-    match (kind, in_flight.has_credit()) {
-        (UnitKind::Keyframe, true) => {
-            decision(StreamEvent::KeyframeSent, vec![StreamCommand::SendUnit])
-        }
-        (UnitKind::Delta, true) => decision(StreamEvent::DeltaSent, vec![StreamCommand::SendUnit]),
+fn synced_unit(pipe: &Pipe, offer: Offer) -> Decision<StreamEvent, StreamCommand> {
+    match (offer.kind, pipe.admits(offer.unit.bytes)) {
+        (UnitKind::Keyframe, true) => decision(
+            StreamEvent::KeyframeSent(offer.unit),
+            vec![StreamCommand::SendUnit],
+        ),
+        (UnitKind::Delta, true) => decision(
+            StreamEvent::DeltaSent(offer.unit),
+            vec![StreamCommand::SendUnit],
+        ),
         (UnitKind::Keyframe | UnitKind::Delta, false) => {
             decision(StreamEvent::Desynced, Vec::new())
         }
@@ -142,65 +140,104 @@ fn decision(
 }
 
 pub fn evolve(state: Stream, event: &StreamEvent) -> Stream {
-    match (state, event) {
+    match (state, *event) {
         (Stream::Hidden | Stream::Unsynced { .. } | Stream::Synced { .. }, StreamEvent::Shown) => {
             Stream::Unsynced {
-                in_flight: InFlight::NONE,
+                pipe: Pipe::default(),
             }
         }
         (Stream::Hidden | Stream::Unsynced { .. } | Stream::Synced { .. }, StreamEvent::Hid) => {
             Stream::Hidden
         }
-        (
-            Stream::Unsynced { in_flight } | Stream::Synced { in_flight },
-            StreamEvent::KeyframeSent,
-        ) => Stream::Synced {
-            in_flight: in_flight.sent(),
-        },
-        (Stream::Unsynced { in_flight }, StreamEvent::DeltaSent) => Stream::Unsynced {
-            in_flight: in_flight.sent(),
-        },
-        (Stream::Synced { in_flight }, StreamEvent::DeltaSent) => Stream::Synced {
-            in_flight: in_flight.sent(),
-        },
-        (Stream::Unsynced { in_flight } | Stream::Synced { in_flight }, StreamEvent::Desynced) => {
-            Stream::Unsynced { in_flight }
+        (Stream::Unsynced { pipe } | Stream::Synced { pipe }, StreamEvent::KeyframeSent(sent)) => {
+            Stream::Synced {
+                pipe: pipe.sent(sent),
+            }
         }
-        (Stream::Unsynced { in_flight }, StreamEvent::Acked) => Stream::Unsynced {
-            in_flight: in_flight.acked(),
+        (Stream::Unsynced { pipe }, StreamEvent::DeltaSent(sent)) => Stream::Unsynced {
+            pipe: pipe.sent(sent),
         },
-        (Stream::Synced { in_flight }, StreamEvent::Acked) => Stream::Synced {
-            in_flight: in_flight.acked(),
+        (Stream::Synced { pipe }, StreamEvent::DeltaSent(sent)) => Stream::Synced {
+            pipe: pipe.sent(sent),
+        },
+        (Stream::Unsynced { pipe } | Stream::Synced { pipe }, StreamEvent::Desynced) => {
+            Stream::Unsynced { pipe }
+        }
+        (Stream::Unsynced { pipe }, StreamEvent::Acked { id, at_us }) => Stream::Unsynced {
+            pipe: pipe.acked(id, at_us),
+        },
+        (Stream::Synced { pipe }, StreamEvent::Acked { id, at_us }) => Stream::Synced {
+            pipe: pipe.acked(id, at_us),
         },
         (
             Stream::Hidden,
-            StreamEvent::KeyframeSent
-            | StreamEvent::DeltaSent
+            StreamEvent::KeyframeSent(_)
+            | StreamEvent::DeltaSent(_)
             | StreamEvent::Desynced
-            | StreamEvent::Acked,
+            | StreamEvent::Acked { .. },
         ) => Stream::Hidden,
     }
 }
 
-pub fn all_states() -> Vec<Stream> {
-    std::iter::once(Stream::Hidden)
-        .chain(credits().map(|in_flight: InFlight| Stream::Unsynced { in_flight }))
-        .chain(credits().map(|in_flight: InFlight| Stream::Synced { in_flight }))
-        .collect()
+pub fn phase(state: &Stream) -> Phase {
+    match state {
+        Stream::Hidden => Phase::Hidden,
+        Stream::Unsynced { pipe } => Phase::Unsynced(pipe.occupancy()),
+        Stream::Synced { pipe } => Phase::Synced(pipe.occupancy()),
+    }
 }
 
-fn credits() -> impl Iterator<Item = InFlight> {
-    (0..=MAX_IN_FLIGHT).map(InFlight)
+const SAMPLE_BYTES: u32 = 1000;
+
+fn sample_sent(id: u32, bytes: u32) -> Sent {
+    Sent {
+        id,
+        bytes,
+        at_us: u64::from(id) * 1000,
+    }
+}
+
+fn sample_pipes() -> [Pipe; 3] {
+    let big: u32 = u32::try_from(FLOOR_BYTES).unwrap_or(u32::MAX);
+    [
+        Pipe::default(),
+        Pipe::default()
+            .sent(sample_sent(1, SAMPLE_BYTES))
+            .sent(sample_sent(2, SAMPLE_BYTES)),
+        Pipe::default()
+            .sent(sample_sent(1, big))
+            .sent(sample_sent(2, SAMPLE_BYTES)),
+    ]
+}
+
+pub fn all_states() -> Vec<Stream> {
+    std::iter::once(Stream::Hidden)
+        .chain(sample_pipes().map(|pipe: Pipe| Stream::Unsynced { pipe }))
+        .chain(sample_pipes().map(|pipe: Pipe| Stream::Synced { pipe }))
+        .collect()
 }
 
 pub fn all_inputs() -> Vec<StreamInput> {
     vec![
         StreamInput::Visibility(true),
         StreamInput::Visibility(false),
-        StreamInput::UnitReady(UnitKind::Keyframe),
-        StreamInput::UnitReady(UnitKind::Delta),
+        StreamInput::UnitReady(Offer {
+            kind: UnitKind::Keyframe,
+            unit: sample_sent(3, SAMPLE_BYTES),
+        }),
+        StreamInput::UnitReady(Offer {
+            kind: UnitKind::Delta,
+            unit: sample_sent(3, SAMPLE_BYTES),
+        }),
         StreamInput::Missed,
-        StreamInput::Ack,
+        StreamInput::Ack {
+            id: 1,
+            at_us: 50_000,
+        },
+        StreamInput::Ack {
+            id: 2,
+            at_us: 50_000,
+        },
     ]
 }
 

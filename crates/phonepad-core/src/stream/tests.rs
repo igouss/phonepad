@@ -1,23 +1,62 @@
 use super::*;
-use std::collections::BTreeSet;
 
 const SHOW: StreamInput = StreamInput::Visibility(true);
 const HIDE: StreamInput = StreamInput::Visibility(false);
-const KEY: StreamInput = StreamInput::UnitReady(UnitKind::Keyframe);
-const DELTA: StreamInput = StreamInput::UnitReady(UnitKind::Delta);
 const MISSED: StreamInput = StreamInput::Missed;
-const ACK: StreamInput = StreamInput::Ack;
+const SMALL: u32 = 1000;
+const BIG: u32 = 64 * 1024;
 
-fn unsynced(in_flight: u8) -> Stream {
-    Stream::Unsynced {
-        in_flight: InFlight(in_flight),
+fn sent(id: u32, bytes: u32) -> Sent {
+    Sent {
+        id,
+        bytes,
+        at_us: u64::from(id) * 1000,
     }
 }
 
-fn synced(in_flight: u8) -> Stream {
-    Stream::Synced {
-        in_flight: InFlight(in_flight),
+fn offer(kind: UnitKind, id: u32, bytes: u32) -> StreamInput {
+    StreamInput::UnitReady(Offer {
+        kind,
+        unit: sent(id, bytes),
+    })
+}
+
+fn key(id: u32) -> StreamInput {
+    offer(UnitKind::Keyframe, id, SMALL)
+}
+
+fn big_key(id: u32) -> StreamInput {
+    offer(UnitKind::Keyframe, id, BIG)
+}
+
+fn delta(id: u32) -> StreamInput {
+    offer(UnitKind::Delta, id, SMALL)
+}
+
+fn big_delta(id: u32) -> StreamInput {
+    offer(UnitKind::Delta, id, BIG)
+}
+
+fn ack(id: u32) -> StreamInput {
+    StreamInput::Ack {
+        id,
+        at_us: 1_000_000 + u64::from(id),
     }
+}
+
+fn flying(ids: &[(u32, u32)]) -> Pipe {
+    ids.iter()
+        .fold(Pipe::default(), |pipe: Pipe, (id, bytes): &(u32, u32)| {
+            pipe.sent(sent(*id, *bytes))
+        })
+}
+
+fn unsynced(ids: &[(u32, u32)]) -> Stream {
+    Stream::Unsynced { pipe: flying(ids) }
+}
+
+fn synced(ids: &[(u32, u32)]) -> Stream {
+    Stream::Synced { pipe: flying(ids) }
 }
 
 fn one(event: StreamEvent, commands: Vec<StreamCommand>) -> Decision<StreamEvent, StreamCommand> {
@@ -28,14 +67,15 @@ fn one(event: StreamEvent, commands: Vec<StreamCommand>) -> Decision<StreamEvent
 }
 
 fn step(state: Stream, input: StreamInput) -> Stream {
-    decide(&state, input).events.iter().fold(state, evolve)
+    let decision: Decision<StreamEvent, StreamCommand> = decide(&state, input);
+    decision.events.iter().fold(state, evolve)
 }
 
-fn reached(inputs: &[StreamInput]) -> Stream {
-    inputs.iter().copied().fold(Stream::Hidden, step)
+fn reached(inputs: &[StreamInput]) -> Phase {
+    phase(&inputs.iter().copied().fold(Stream::Hidden, step))
 }
 
-fn sent(inputs: &[StreamInput]) -> Vec<StreamCommand> {
+fn commands(inputs: &[StreamInput]) -> Vec<StreamCommand> {
     inputs
         .iter()
         .copied()
@@ -49,212 +89,221 @@ fn sent(inputs: &[StreamInput]) -> Vec<StreamCommand> {
         .1
 }
 
-fn variant_index(state: &Stream) -> usize {
-    match state {
-        Stream::Hidden => 0,
-        Stream::Unsynced { .. } => 1,
-        Stream::Synced { .. } => 2,
-    }
-}
-
-fn input_index(input: &StreamInput) -> usize {
-    match input {
-        StreamInput::Visibility(true) => 0,
-        StreamInput::Visibility(false) => 1,
-        StreamInput::UnitReady(UnitKind::Keyframe) => 2,
-        StreamInput::UnitReady(UnitKind::Delta) => 3,
-        StreamInput::Missed => 4,
-        StreamInput::Ack => 5,
-    }
-}
+const JOIN: StreamCommand = StreamCommand::JoinViewers;
+const SEND: StreamCommand = StreamCommand::SendUnit;
+const REQUEST: StreamCommand = StreamCommand::RequestKeyframe;
 
 #[test]
 fn a_viewer_never_receives_a_delta_whose_reference_it_did_not_receive() {
     assert_eq!(
-        sent(&[
-            SHOW, KEY, DELTA, DELTA, DELTA, DELTA, DELTA, ACK, DELTA, ACK, DELTA, KEY, DELTA
+        commands(&[
+            SHOW,
+            delta(1),
+            key(2),
+            big_delta(3),
+            delta(4),
+            ack(2),
+            delta(5),
+            key(6),
+            delta(7)
         ]),
-        vec![
-            StreamCommand::JoinViewers,
-            StreamCommand::RequestKeyframe,
-            StreamCommand::SendUnit,
-            StreamCommand::SendUnit,
-            StreamCommand::SendUnit,
-            StreamCommand::SendUnit,
-            StreamCommand::RequestKeyframe,
-            StreamCommand::SendUnit,
-            StreamCommand::SendUnit,
-        ]
+        vec![JOIN, REQUEST, SEND, REQUEST, SEND, SEND]
     );
 }
 
 #[test]
 fn a_viewer_that_always_acks_in_time_receives_every_unit() {
     assert_eq!(
-        sent(&[
-            SHOW, KEY, ACK, DELTA, ACK, DELTA, DELTA, ACK, DELTA, KEY, DELTA
+        commands(&[
+            SHOW,
+            key(1),
+            ack(1),
+            delta(2),
+            ack(2),
+            delta(3),
+            delta(4),
+            ack(3),
+            delta(5),
+            key(6),
+            delta(7)
+        ]),
+        vec![JOIN, REQUEST, SEND, SEND, SEND, SEND, SEND, SEND, SEND]
+    );
+}
+
+#[test]
+fn a_viewer_takes_more_than_four_units_unacknowledged_while_they_fit_the_window() {
+    assert_eq!(
+        commands(&[
+            SHOW,
+            key(1),
+            delta(2),
+            delta(3),
+            delta(4),
+            delta(5),
+            delta(6),
+            delta(7),
+            delta(8)
         ]),
         vec![
-            StreamCommand::JoinViewers,
-            StreamCommand::RequestKeyframe,
-            StreamCommand::SendUnit,
-            StreamCommand::SendUnit,
-            StreamCommand::SendUnit,
-            StreamCommand::SendUnit,
-            StreamCommand::SendUnit,
-            StreamCommand::SendUnit,
-            StreamCommand::SendUnit,
+            JOIN, REQUEST, SEND, SEND, SEND, SEND, SEND, SEND, SEND, SEND
         ]
     );
 }
 
 #[test]
-fn a_keyframe_dropped_at_the_limit_is_requested_once_an_ack_returns_credit() {
+fn a_keyframe_refused_for_want_of_room_is_requested_once_the_flight_empties() {
     assert_eq!(
-        sent(&[SHOW, KEY, DELTA, DELTA, DELTA, DELTA, KEY, ACK, ACK, KEY]),
-        vec![
-            StreamCommand::JoinViewers,
-            StreamCommand::RequestKeyframe,
-            StreamCommand::SendUnit,
-            StreamCommand::SendUnit,
-            StreamCommand::SendUnit,
-            StreamCommand::SendUnit,
-            StreamCommand::RequestKeyframe,
-            StreamCommand::SendUnit,
-        ]
+        commands(&[SHOW, big_key(1), delta(2), key(3), ack(1), key(4)]),
+        vec![JOIN, REQUEST, SEND, REQUEST, SEND]
     );
 }
 
 #[test]
 fn a_viewer_that_stops_acking_requests_no_keyframe_however_many_arrive() {
     assert_eq!(
-        sent(&[
-            SHOW, KEY, DELTA, DELTA, DELTA, DELTA, KEY, DELTA, KEY, KEY, MISSED
-        ]),
-        vec![
-            StreamCommand::JoinViewers,
-            StreamCommand::RequestKeyframe,
-            StreamCommand::SendUnit,
-            StreamCommand::SendUnit,
-            StreamCommand::SendUnit,
-            StreamCommand::SendUnit,
-        ]
+        commands(&[SHOW, big_key(1), delta(2), key(3), delta(4), key(5), MISSED]),
+        vec![JOIN, REQUEST, SEND]
     );
 }
 
 #[test]
 fn a_viewer_that_missed_units_receives_no_delta_until_a_keyframe() {
     assert_eq!(
-        sent(&[SHOW, KEY, ACK, DELTA, ACK, MISSED, DELTA, DELTA, KEY, DELTA]),
+        commands(&[
+            SHOW,
+            key(1),
+            ack(1),
+            delta(2),
+            ack(2),
+            MISSED,
+            delta(3),
+            delta(4),
+            key(5),
+            delta(6)
+        ]),
+        vec![JOIN, REQUEST, SEND, SEND, REQUEST, SEND, SEND]
+    );
+}
+
+#[test]
+fn a_viewer_that_missed_units_with_units_in_flight_asks_when_the_last_one_lands() {
+    assert_eq!(
+        commands(&[SHOW, key(1), delta(2), MISSED, ack(1), ack(2)]),
+        vec![JOIN, REQUEST, SEND, SEND, REQUEST]
+    );
+}
+
+#[test]
+fn one_ack_lands_every_unit_sent_before_it() {
+    assert_eq!(
+        commands(&[SHOW, key(1), delta(2), delta(3), MISSED, ack(3), ack(1)]),
+        vec![JOIN, REQUEST, SEND, SEND, SEND, REQUEST]
+    );
+}
+
+#[test]
+fn all_states_cover_every_phase() {
+    assert_eq!(
+        all_states().iter().map(phase).collect::<Vec<Phase>>(),
         vec![
-            StreamCommand::JoinViewers,
-            StreamCommand::RequestKeyframe,
-            StreamCommand::SendUnit,
-            StreamCommand::SendUnit,
-            StreamCommand::RequestKeyframe,
-            StreamCommand::SendUnit,
-            StreamCommand::SendUnit,
+            Phase::Hidden,
+            Phase::Unsynced(Occupancy::Empty),
+            Phase::Unsynced(Occupancy::Room),
+            Phase::Unsynced(Occupancy::Full),
+            Phase::Synced(Occupancy::Empty),
+            Phase::Synced(Occupancy::Room),
+            Phase::Synced(Occupancy::Full),
         ]
     );
 }
 
 #[test]
-fn all_states_cover_every_variant() {
+fn every_listed_phase_is_reachable_from_hidden() {
     assert_eq!(
-        all_states()
-            .iter()
-            .map(variant_index)
-            .collect::<BTreeSet<usize>>(),
-        BTreeSet::from([0, 1, 2])
-    );
-}
-
-#[test]
-fn all_inputs_cover_every_variant() {
-    assert_eq!(
-        all_inputs()
-            .iter()
-            .map(input_index)
-            .collect::<BTreeSet<usize>>(),
-        BTreeSet::from([0, 1, 2, 3, 4, 5])
-    );
-}
-
-#[test]
-fn all_states_lists_hidden_then_every_credit_unsynced_then_synced() {
-    assert_eq!(
-        all_states(),
-        vec![
-            Stream::Hidden,
-            unsynced(0),
-            unsynced(1),
-            unsynced(2),
-            unsynced(3),
-            unsynced(4),
-            synced(0),
-            synced(1),
-            synced(2),
-            synced(3),
-            synced(4),
-        ]
-    );
-}
-
-#[test]
-fn every_listed_state_is_reachable_from_hidden() {
-    assert_eq!(
-        all_states(),
+        all_states().iter().map(phase).collect::<Vec<Phase>>(),
         vec![
             reached(&[]),
-            reached(&[SHOW, KEY, DELTA, DELTA, DELTA, DELTA, ACK, ACK, ACK, ACK]),
-            reached(&[SHOW, KEY, DELTA, DELTA, DELTA, DELTA, ACK, ACK, ACK]),
-            reached(&[SHOW, KEY, DELTA, DELTA, DELTA, DELTA, ACK, ACK]),
-            reached(&[SHOW, KEY, DELTA, DELTA, DELTA, DELTA, ACK]),
-            reached(&[SHOW, KEY, DELTA, DELTA, DELTA, DELTA]),
-            reached(&[SHOW, KEY, ACK]),
-            reached(&[SHOW, KEY]),
-            reached(&[SHOW, KEY, DELTA]),
-            reached(&[SHOW, KEY, DELTA, DELTA]),
-            reached(&[SHOW, KEY, DELTA, DELTA, DELTA]),
+            reached(&[SHOW]),
+            reached(&[SHOW, key(1), delta(2), MISSED]),
+            reached(&[SHOW, big_key(1), big_delta(2)]),
+            reached(&[SHOW, key(1), ack(1)]),
+            reached(&[SHOW, key(1)]),
+            reached(&[SHOW, big_key(1)]),
         ]
     );
 }
 
 #[test]
-fn no_input_leaves_the_listed_states() {
-    let listed: Vec<Stream> = all_states();
-    let escaped: Vec<Stream> = listed
-        .iter()
-        .flat_map(|state: &Stream| {
+fn no_input_leaves_the_listed_phases() {
+    let listed: Vec<Phase> = all_states().iter().map(phase).collect();
+    let escaped: Vec<Phase> = all_states()
+        .into_iter()
+        .flat_map(|state: Stream| {
             all_inputs()
                 .into_iter()
-                .map(move |input: StreamInput| step(*state, input))
+                .map(move |input: StreamInput| phase(&step(state.clone(), input)))
         })
-        .filter(|target: &Stream| !listed.contains(target))
+        .filter(|target: &Phase| !listed.contains(target))
         .collect();
-    assert_eq!(escaped, Vec::<Stream>::new());
+    assert_eq!(escaped, Vec::<Phase>::new());
 }
 
 #[test]
 fn all_inputs_lists_every_input() {
-    assert_eq!(all_inputs(), vec![SHOW, HIDE, KEY, DELTA, MISSED, ACK]);
+    assert_eq!(
+        all_inputs(),
+        vec![
+            SHOW,
+            HIDE,
+            offer(UnitKind::Keyframe, 3, SMALL),
+            offer(UnitKind::Delta, 3, SMALL),
+            MISSED,
+            StreamInput::Ack {
+                id: 1,
+                at_us: 50_000
+            },
+            StreamInput::Ack {
+                id: 2,
+                at_us: 50_000
+            },
+        ]
+    );
+}
+
+#[test]
+fn the_listed_inputs_move_the_room_phase_to_every_neighbour() {
+    let room: Stream = synced(&[(1, SMALL), (2, SMALL)]);
+    assert_eq!(
+        all_inputs()
+            .into_iter()
+            .map(|input: StreamInput| phase(&step(room.clone(), input)))
+            .collect::<Vec<Phase>>(),
+        vec![
+            Phase::Synced(Occupancy::Room),
+            Phase::Hidden,
+            Phase::Synced(Occupancy::Room),
+            Phase::Synced(Occupancy::Room),
+            Phase::Unsynced(Occupancy::Room),
+            Phase::Synced(Occupancy::Room),
+            Phase::Synced(Occupancy::Empty),
+        ]
+    );
 }
 
 #[test]
 fn hidden_shown_joins_viewers_and_requests_a_keyframe() {
     assert_eq!(
         decide(&Stream::Hidden, SHOW),
-        one(
-            StreamEvent::Shown,
-            vec![StreamCommand::JoinViewers, StreamCommand::RequestKeyframe]
-        )
+        one(StreamEvent::Shown, vec![JOIN, REQUEST])
     );
 }
 
 #[test]
 fn hidden_ignores_every_other_input() {
     assert_eq!(
-        [HIDE, KEY, DELTA, MISSED, ACK].map(|input: StreamInput| decide(&Stream::Hidden, input)),
+        [HIDE, key(1), delta(1), MISSED, ack(1)]
+            .map(|input: StreamInput| decide(&Stream::Hidden, input)),
         [
             Decision::none(),
             Decision::none(),
@@ -268,7 +317,7 @@ fn hidden_ignores_every_other_input() {
 #[test]
 fn unsynced_hidden_leaves_viewers() {
     assert_eq!(
-        decide(&unsynced(2), HIDE),
+        decide(&unsynced(&[(1, SMALL)]), HIDE),
         one(StreamEvent::Hid, vec![StreamCommand::LeaveViewers])
     );
 }
@@ -276,7 +325,7 @@ fn unsynced_hidden_leaves_viewers() {
 #[test]
 fn synced_hidden_leaves_viewers() {
     assert_eq!(
-        decide(&synced(4), HIDE),
+        decide(&synced(&[]), HIDE),
         one(StreamEvent::Hid, vec![StreamCommand::LeaveViewers])
     );
 }
@@ -284,77 +333,88 @@ fn synced_hidden_leaves_viewers() {
 #[test]
 fn shown_again_does_nothing() {
     assert_eq!(
-        [decide(&unsynced(0), SHOW), decide(&synced(3), SHOW)],
+        [
+            decide(&unsynced(&[]), SHOW),
+            decide(&synced(&[(1, SMALL)]), SHOW)
+        ],
         [Decision::none(), Decision::none()]
     );
 }
 
 #[test]
-fn unsynced_keyframe_with_no_flight_is_sent() {
+fn unsynced_keyframe_into_an_empty_pipe_is_sent_however_big() {
     assert_eq!(
-        decide(&unsynced(0), KEY),
-        one(StreamEvent::KeyframeSent, vec![StreamCommand::SendUnit])
+        decide(&unsynced(&[]), offer(UnitKind::Keyframe, 9, u32::MAX)),
+        one(StreamEvent::KeyframeSent(sent(9, u32::MAX)), vec![SEND])
     );
 }
 
 #[test]
-fn unsynced_keyframe_below_limit_is_sent() {
+fn unsynced_keyframe_with_room_is_sent() {
     assert_eq!(
-        decide(&unsynced(MAX_IN_FLIGHT - 1), KEY),
-        one(StreamEvent::KeyframeSent, vec![StreamCommand::SendUnit])
+        decide(&unsynced(&[(1, SMALL)]), key(2)),
+        one(StreamEvent::KeyframeSent(sent(2, SMALL)), vec![SEND])
     );
 }
 
 #[test]
-fn unsynced_keyframe_at_limit_is_dropped_without_a_request() {
-    assert_eq!(decide(&unsynced(MAX_IN_FLIGHT), KEY), Decision::none());
+fn unsynced_keyframe_without_room_is_dropped_without_a_request() {
+    assert_eq!(decide(&unsynced(&[(1, BIG)]), key(2)), Decision::none());
 }
 
 #[test]
 fn unsynced_delta_is_never_sent() {
     assert_eq!(
         [
-            decide(&unsynced(0), DELTA),
-            decide(&unsynced(MAX_IN_FLIGHT), DELTA)
+            decide(&unsynced(&[]), delta(1)),
+            decide(&unsynced(&[(1, BIG)]), delta(2))
         ],
         [Decision::none(), Decision::none()]
     );
 }
 
 #[test]
-fn missed_units_while_unsynced_request_a_keyframe_again_only_with_credit() {
+fn missed_units_while_unsynced_request_a_keyframe_only_with_an_empty_flight() {
     assert_eq!(
         [
-            decide(&unsynced(MAX_IN_FLIGHT - 1), MISSED),
-            decide(&unsynced(MAX_IN_FLIGHT), MISSED)
+            decide(&unsynced(&[]), MISSED),
+            decide(&unsynced(&[(1, SMALL)]), MISSED)
         ],
         [
-            one(StreamEvent::Desynced, vec![StreamCommand::RequestKeyframe]),
+            one(StreamEvent::Desynced, vec![REQUEST]),
             one(StreamEvent::Desynced, vec![])
         ]
     );
 }
 
 #[test]
-fn synced_units_below_limit_are_sent() {
+fn synced_units_with_room_are_sent() {
     assert_eq!(
         [
-            decide(&synced(0), KEY),
-            decide(&synced(MAX_IN_FLIGHT - 1), DELTA)
+            decide(&synced(&[]), key(1)),
+            decide(&synced(&[(1, SMALL)]), delta(2))
         ],
         [
-            one(StreamEvent::KeyframeSent, vec![StreamCommand::SendUnit]),
-            one(StreamEvent::DeltaSent, vec![StreamCommand::SendUnit])
+            one(StreamEvent::KeyframeSent(sent(1, SMALL)), vec![SEND]),
+            one(StreamEvent::DeltaSent(sent(2, SMALL)), vec![SEND])
         ]
     );
 }
 
 #[test]
-fn synced_units_at_limit_desync_without_a_request() {
+fn synced_delta_into_an_empty_pipe_is_sent_however_big() {
+    assert_eq!(
+        decide(&synced(&[]), offer(UnitKind::Delta, 9, u32::MAX)),
+        one(StreamEvent::DeltaSent(sent(9, u32::MAX)), vec![SEND])
+    );
+}
+
+#[test]
+fn synced_units_without_room_desync_without_a_request() {
     assert_eq!(
         [
-            decide(&synced(MAX_IN_FLIGHT), KEY),
-            decide(&synced(MAX_IN_FLIGHT), DELTA)
+            decide(&synced(&[(1, BIG)]), key(2)),
+            decide(&synced(&[(1, BIG)]), delta(2))
         ],
         [
             one(StreamEvent::Desynced, vec![]),
@@ -364,63 +424,85 @@ fn synced_units_at_limit_desync_without_a_request() {
 }
 
 #[test]
-fn missed_units_while_synced_desync_and_request_a_keyframe_only_with_credit() {
+fn missed_units_while_synced_desync_and_request_a_keyframe_only_with_an_empty_flight() {
     assert_eq!(
         [
-            decide(&synced(MAX_IN_FLIGHT - 1), MISSED),
-            decide(&synced(MAX_IN_FLIGHT), MISSED)
+            decide(&synced(&[]), MISSED),
+            decide(&synced(&[(1, SMALL)]), MISSED)
         ],
         [
-            one(StreamEvent::Desynced, vec![StreamCommand::RequestKeyframe]),
+            one(StreamEvent::Desynced, vec![REQUEST]),
             one(StreamEvent::Desynced, vec![])
         ]
     );
 }
 
 #[test]
-fn ack_with_flight_returns_credit() {
+fn an_ack_for_a_unit_in_flight_lands_it() {
     assert_eq!(
         [
-            decide(&unsynced(1), ACK),
-            decide(&synced(MAX_IN_FLIGHT), ACK)
+            decide(&unsynced(&[(1, SMALL), (2, SMALL)]), ack(1)),
+            decide(&synced(&[(1, SMALL)]), ack(1))
         ],
         [
-            one(StreamEvent::Acked, vec![]),
-            one(StreamEvent::Acked, vec![])
+            one(
+                StreamEvent::Acked {
+                    id: 1,
+                    at_us: 1_000_001
+                },
+                vec![]
+            ),
+            one(
+                StreamEvent::Acked {
+                    id: 1,
+                    at_us: 1_000_001
+                },
+                vec![]
+            )
         ]
     );
 }
 
 #[test]
-fn unsynced_ack_that_restores_credit_requests_a_keyframe() {
+fn an_unsynced_ack_that_empties_the_flight_requests_a_keyframe() {
+    assert_eq!(
+        decide(&unsynced(&[(1, SMALL), (2, SMALL)]), ack(2)),
+        one(
+            StreamEvent::Acked {
+                id: 2,
+                at_us: 1_000_002
+            },
+            vec![REQUEST]
+        )
+    );
+}
+
+#[test]
+fn an_ack_for_a_unit_not_in_flight_does_nothing() {
     assert_eq!(
         [
-            decide(&unsynced(MAX_IN_FLIGHT), ACK),
-            decide(&unsynced(MAX_IN_FLIGHT - 1), ACK)
+            decide(&unsynced(&[]), ack(1)),
+            decide(&synced(&[]), ack(1)),
+            decide(&unsynced(&[(2, SMALL)]), ack(1)),
+            decide(&synced(&[(2, SMALL)]), ack(1))
         ],
         [
-            one(StreamEvent::Acked, vec![StreamCommand::RequestKeyframe]),
-            one(StreamEvent::Acked, vec![])
+            Decision::none(),
+            Decision::none(),
+            Decision::none(),
+            Decision::none()
         ]
     );
 }
 
 #[test]
-fn ack_with_nothing_in_flight_does_nothing() {
-    assert_eq!(
-        [decide(&unsynced(0), ACK), decide(&synced(0), ACK)],
-        [Decision::none(), Decision::none()]
-    );
-}
-
-#[test]
-fn shown_starts_unsynced_with_nothing_in_flight() {
+fn shown_starts_unsynced_with_an_empty_pipe() {
     assert_eq!(
         [
             evolve(Stream::Hidden, &StreamEvent::Shown),
-            evolve(synced(3), &StreamEvent::Shown)
+            evolve(synced(&[(1, SMALL)]), &StreamEvent::Shown)
         ],
-        [unsynced(0), unsynced(0)]
+        [unsynced(&[]), unsynced(&[])]
     );
 }
 
@@ -428,74 +510,71 @@ fn shown_starts_unsynced_with_nothing_in_flight() {
 fn hid_stops_streaming() {
     assert_eq!(
         [
-            evolve(unsynced(2), &StreamEvent::Hid),
-            evolve(synced(3), &StreamEvent::Hid)
+            evolve(unsynced(&[(1, SMALL)]), &StreamEvent::Hid),
+            evolve(synced(&[]), &StreamEvent::Hid)
         ],
         [Stream::Hidden, Stream::Hidden]
     );
 }
 
 #[test]
-fn keyframe_sent_syncs_and_takes_credit() {
+fn keyframe_sent_syncs_and_enters_the_pipe() {
     assert_eq!(
         [
-            evolve(unsynced(0), &StreamEvent::KeyframeSent),
-            evolve(synced(2), &StreamEvent::KeyframeSent)
+            evolve(unsynced(&[]), &StreamEvent::KeyframeSent(sent(1, SMALL))),
+            evolve(
+                synced(&[(1, SMALL)]),
+                &StreamEvent::KeyframeSent(sent(2, BIG))
+            )
         ],
-        [synced(1), synced(3)]
+        [synced(&[(1, SMALL)]), synced(&[(1, SMALL), (2, BIG)])]
     );
 }
 
 #[test]
-fn delta_sent_takes_credit_and_keeps_sync() {
+fn delta_sent_enters_the_pipe_and_keeps_sync() {
     assert_eq!(
         [
-            evolve(synced(0), &StreamEvent::DeltaSent),
-            evolve(synced(3), &StreamEvent::DeltaSent),
-            evolve(unsynced(1), &StreamEvent::DeltaSent)
+            evolve(synced(&[]), &StreamEvent::DeltaSent(sent(1, SMALL))),
+            evolve(
+                unsynced(&[(1, SMALL)]),
+                &StreamEvent::DeltaSent(sent(2, SMALL))
+            )
         ],
-        [synced(1), synced(4), unsynced(2)]
+        [synced(&[(1, SMALL)]), unsynced(&[(1, SMALL), (2, SMALL)])]
     );
 }
 
 #[test]
-fn sent_saturates_at_the_limit() {
+fn desynced_keeps_the_pipe() {
     assert_eq!(
-        evolve(synced(MAX_IN_FLIGHT), &StreamEvent::DeltaSent),
-        synced(MAX_IN_FLIGHT)
+        [
+            evolve(synced(&[(1, SMALL)]), &StreamEvent::Desynced),
+            evolve(unsynced(&[(1, BIG)]), &StreamEvent::Desynced)
+        ],
+        [unsynced(&[(1, SMALL)]), unsynced(&[(1, BIG)])]
     );
 }
 
 #[test]
-fn desynced_keeps_credit() {
+fn acked_lands_the_unit_in_the_pipe() {
+    let at: StreamEvent = StreamEvent::Acked {
+        id: 1,
+        at_us: 9_000,
+    };
     assert_eq!(
         [
-            evolve(synced(4), &StreamEvent::Desynced),
-            evolve(unsynced(3), &StreamEvent::Desynced)
+            evolve(unsynced(&[(1, SMALL), (2, SMALL)]), &at),
+            evolve(synced(&[(1, SMALL)]), &at)
         ],
-        [unsynced(4), unsynced(3)]
-    );
-}
-
-#[test]
-fn acked_returns_one_credit() {
-    assert_eq!(
         [
-            evolve(unsynced(4), &StreamEvent::Acked),
-            evolve(synced(2), &StreamEvent::Acked)
-        ],
-        [unsynced(3), synced(1)]
-    );
-}
-
-#[test]
-fn acked_saturates_at_zero() {
-    assert_eq!(
-        [
-            evolve(unsynced(0), &StreamEvent::Acked),
-            evolve(synced(0), &StreamEvent::Acked)
-        ],
-        [unsynced(0), synced(0)]
+            Stream::Unsynced {
+                pipe: flying(&[(1, SMALL), (2, SMALL)]).acked(1, 9_000)
+            },
+            Stream::Synced {
+                pipe: flying(&[(1, SMALL)]).acked(1, 9_000)
+            }
+        ]
     );
 }
 
@@ -503,12 +582,17 @@ fn acked_saturates_at_zero() {
 fn delivery_events_while_hidden_change_nothing() {
     assert_eq!(
         [
-            StreamEvent::KeyframeSent,
-            StreamEvent::DeltaSent,
+            StreamEvent::KeyframeSent(sent(1, SMALL)),
+            StreamEvent::DeltaSent(sent(1, SMALL)),
             StreamEvent::Desynced,
-            StreamEvent::Acked
+            StreamEvent::Acked { id: 1, at_us: 0 }
         ]
         .map(|event: StreamEvent| evolve(Stream::Hidden, &event)),
-        [Stream::Hidden; 4]
+        [
+            Stream::Hidden,
+            Stream::Hidden,
+            Stream::Hidden,
+            Stream::Hidden
+        ]
     );
 }

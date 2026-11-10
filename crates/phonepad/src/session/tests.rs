@@ -54,11 +54,8 @@ fn view_size_is_published() {
 }
 
 #[test]
-fn an_ack_times_its_unit_then_credits_the_stream() {
-    assert_eq!(
-        effects(PhoneMessage::Ack(9), 0),
-        vec![Effect::Acked(9), Effect::Stream(StreamInput::Ack)]
-    );
+fn an_ack_times_its_unit_and_credits_the_stream() {
+    assert_eq!(effects(PhoneMessage::Ack(9), 0), vec![Effect::Acked(9)]);
 }
 
 #[test]
@@ -84,30 +81,42 @@ fn keyframe_request_counts_as_a_missed_unit() {
 }
 
 #[test]
-fn a_received_unit_is_offered_with_its_kind() {
+fn a_received_unit_is_offered_with_its_kind_id_size_and_arrival() {
     let unit: Unit = Unit {
         kind: UnitKind::Keyframe,
-        id: 0,
+        id: 7,
         captured_ns: 0,
         message: Bytes::from_static(b"au"),
     };
     assert_eq!(
-        unit_input(&Ok(unit)),
-        Some(StreamInput::UnitReady(UnitKind::Keyframe))
+        unit_input(&Ok(unit), 42),
+        Some(StreamInput::UnitReady(Offer {
+            kind: UnitKind::Keyframe,
+            unit: stream::Sent {
+                id: 7,
+                bytes: 2,
+                at_us: 42
+            }
+        }))
     );
+}
+
+#[test]
+fn nanoseconds_become_whole_microseconds() {
+    assert_eq!([micros(999), micros(1000), micros(2_500_999)], [0, 1, 2500]);
 }
 
 #[test]
 fn a_lagged_feed_is_a_missed_unit() {
     assert_eq!(
-        unit_input(&Err(RecvError::Lagged(3))),
+        unit_input(&Err(RecvError::Lagged(3)), 0),
         Some(StreamInput::Missed)
     );
 }
 
 #[test]
 fn a_closed_feed_ends_the_session() {
-    assert_eq!(unit_input(&Err(RecvError::Closed)), None);
+    assert_eq!(unit_input(&Err(RecvError::Closed), 0), None);
 }
 
 const LOGIN: &str = "owner@example.com";
