@@ -12,11 +12,122 @@ pub struct Size {
     pub h: NonZeroU32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Transform {
+    Normal,
+    Rotate90,
+    Rotate180,
+    Rotate270,
+    Flipped,
+    Flipped90,
+    Flipped180,
+    Flipped270,
+}
+
+impl Transform {
+    pub fn from_wayland(code: u8) -> Option<Transform> {
+        match code {
+            0 => Some(Transform::Normal),
+            1 => Some(Transform::Rotate90),
+            2 => Some(Transform::Rotate180),
+            3 => Some(Transform::Rotate270),
+            4 => Some(Transform::Flipped),
+            5 => Some(Transform::Flipped90),
+            6 => Some(Transform::Flipped180),
+            7 => Some(Transform::Flipped270),
+            _ => None,
+        }
+    }
+
+    pub fn wayland(self) -> u8 {
+        match self {
+            Transform::Normal => 0,
+            Transform::Rotate90 => 1,
+            Transform::Rotate180 => 2,
+            Transform::Rotate270 => 3,
+            Transform::Flipped => 4,
+            Transform::Flipped90 => 5,
+            Transform::Flipped180 => 6,
+            Transform::Flipped270 => 7,
+        }
+    }
+
+    pub fn swaps_axes(self) -> bool {
+        match self {
+            Transform::Rotate90
+            | Transform::Rotate270
+            | Transform::Flipped90
+            | Transform::Flipped270 => true,
+            Transform::Normal
+            | Transform::Rotate180
+            | Transform::Flipped
+            | Transform::Flipped180 => false,
+        }
+    }
+
+    pub fn oriented(self, size: Size) -> Size {
+        if self.swaps_axes() {
+            Size {
+                w: size.h,
+                h: size.w,
+            }
+        } else {
+            size
+        }
+    }
+
+    fn apply(self, crop: Crop, space: Size) -> Crop {
+        let width: u32 = space.w.get();
+        let height: u32 = space.h.get();
+        let right: u32 = width.saturating_sub(crop.x + crop.w.get());
+        let below: u32 = height.saturating_sub(crop.y + crop.h.get());
+        let (x, y, swapped): (u32, u32, bool) = match self {
+            Transform::Normal => (crop.x, crop.y, false),
+            Transform::Rotate90 => (below, crop.x, true),
+            Transform::Rotate180 => (right, below, false),
+            Transform::Rotate270 => (crop.y, right, true),
+            Transform::Flipped => (right, crop.y, false),
+            Transform::Flipped90 => (crop.y, crop.x, true),
+            Transform::Flipped180 => (crop.x, below, false),
+            Transform::Flipped270 => (below, right, true),
+        };
+        let (w, h): (NonZeroU32, NonZeroU32) = if swapped {
+            (crop.h, crop.w)
+        } else {
+            (crop.w, crop.h)
+        };
+        Crop { x, y, w, h }
+    }
+
+    fn inverse(self) -> Transform {
+        match self {
+            Transform::Rotate90 => Transform::Rotate270,
+            Transform::Rotate270 => Transform::Rotate90,
+            Transform::Normal
+            | Transform::Rotate180
+            | Transform::Flipped
+            | Transform::Flipped90
+            | Transform::Flipped180
+            | Transform::Flipped270 => self,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Crop {
+    pub x: u32,
+    pub y: u32,
+    pub w: NonZeroU32,
+    pub h: NonZeroU32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Monitor {
     pub name: String,
     pub origin: Point,
     pub size: Size,
+    pub pixels: Size,
+    pub transform: Transform,
 }
 
 impl Monitor {
@@ -28,18 +139,35 @@ impl Monitor {
         scale: f64,
         transform: u8,
     ) -> Option<Monitor> {
-        if transform > 7 {
-            return None;
-        }
+        let transform: Transform = Transform::from_wayland(transform)?;
         let w: NonZeroU32 = logical(pixel_w, scale)?;
         let h: NonZeroU32 = logical(pixel_h, scale)?;
-        let rotated: bool = transform % 2 == 1;
-        let size: Size = if rotated {
-            Size { w: h, h: w }
-        } else {
-            Size { w, h }
+        let pixels: Size = Size {
+            w: NonZeroU32::new(pixel_w)?,
+            h: NonZeroU32::new(pixel_h)?,
         };
-        Some(Monitor { name, origin, size })
+        Some(Monitor {
+            name,
+            origin,
+            size: transform.oriented(Size { w, h }),
+            pixels,
+            transform,
+        })
+    }
+
+    pub fn buffer_crop(&self, local: Point, size: Size) -> Option<Crop> {
+        let out: Size = self.transform.oriented(self.pixels);
+        let span = |start: i32, len: NonZeroU32, logical: NonZeroU32, pixels: NonZeroU32| {
+            let start: u64 = u64::try_from(start).ok()?;
+            let end: u64 = start + u64::from(len.get());
+            let to_pixels = |at: u64| at * u64::from(pixels.get()) / u64::from(logical.get());
+            let first: u32 = u32::try_from(to_pixels(start)).ok()?;
+            let last: u32 = u32::try_from(to_pixels(end).min(u64::from(pixels.get()))).ok()?;
+            Some((first, NonZeroU32::new(last.checked_sub(first)?)?))
+        };
+        let (x, w): (u32, NonZeroU32) = span(local.x, size.w, self.size.w, out.w)?;
+        let (y, h): (u32, NonZeroU32) = span(local.y, size.h, self.size.h, out.h)?;
+        Some(self.transform.inverse().apply(Crop { x, y, w, h }, out))
     }
 
     fn contains(&self, p: Point) -> bool {

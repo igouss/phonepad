@@ -223,6 +223,8 @@ pub(super) fn schedule(
 mod tests {
     use std::num::NonZeroU32;
 
+    use phonepad_core::geometry::Transform;
+
     use super::*;
 
     const HERE: Shot = Shot {
@@ -272,6 +274,8 @@ mod tests {
             name: name.to_owned(),
             origin: Point { x, y: 0 },
             size: size(w, h),
+            pixels: size(w, h),
+            transform: Transform::Normal,
         }
     }
 

@@ -13,10 +13,129 @@ fn monitor(name: &str, x: i32, y: i32, w: u32, h: u32) -> Monitor {
         name: name.to_string(),
         origin: Point { x, y },
         size: size(w, h),
+        pixels: size(w, h),
+        transform: Transform::Normal,
     }
 }
 
-fn mode(pixel_w: u32, pixel_h: u32, scale: f64, transform: u8) -> Option<Monitor> {
+fn panel(transform: u8) -> Monitor {
+    Monitor::from_mode(
+        "P".to_string(),
+        Point { x: 0, y: 0 },
+        400,
+        200,
+        1.0,
+        transform,
+    )
+    .unwrap()
+}
+
+fn crop(x: u32, y: u32, w: u32, h: u32) -> Option<Crop> {
+    Some(Crop {
+        x,
+        y,
+        w: nz(w),
+        h: nz(h),
+    })
+}
+
+const BOX: Point = Point { x: 10, y: 20 };
+
+fn box_size() -> Size {
+    size(30, 40)
+}
+
+#[test]
+fn every_wayland_transform_code_round_trips() {
+    assert_eq!(
+        (0..=7)
+            .filter_map(Transform::from_wayland)
+            .map(Transform::wayland)
+            .collect::<Vec<u8>>(),
+        vec![0, 1, 2, 3, 4, 5, 6, 7]
+    );
+}
+
+#[test]
+fn a_normal_panel_crops_the_same_box() {
+    assert_eq!(panel(0).buffer_crop(BOX, box_size()), crop(10, 20, 30, 40));
+}
+
+#[test]
+fn a_panel_turned_90_crops_from_the_bottom_of_the_buffer() {
+    assert_eq!(panel(1).buffer_crop(BOX, box_size()), crop(20, 160, 40, 30));
+}
+
+#[test]
+fn a_panel_turned_180_crops_from_the_far_corner() {
+    assert_eq!(
+        panel(2).buffer_crop(BOX, box_size()),
+        crop(360, 140, 30, 40)
+    );
+}
+
+#[test]
+fn a_panel_turned_270_crops_from_the_right_of_the_buffer() {
+    assert_eq!(panel(3).buffer_crop(BOX, box_size()), crop(340, 10, 40, 30));
+}
+
+#[test]
+fn a_flipped_panel_mirrors_the_box() {
+    assert_eq!(panel(4).buffer_crop(BOX, box_size()), crop(360, 20, 30, 40));
+}
+
+#[test]
+fn a_flipped_90_panel_transposes_the_box() {
+    assert_eq!(panel(5).buffer_crop(BOX, box_size()), crop(20, 10, 40, 30));
+}
+
+#[test]
+fn a_flipped_180_panel_mirrors_the_box_vertically() {
+    assert_eq!(panel(6).buffer_crop(BOX, box_size()), crop(10, 140, 30, 40));
+}
+
+#[test]
+fn a_flipped_270_panel_crops_from_the_far_corner_transposed() {
+    assert_eq!(
+        panel(7).buffer_crop(BOX, box_size()),
+        crop(340, 160, 40, 30)
+    );
+}
+
+#[test]
+fn a_scaled_panel_crops_in_pixels() {
+    let scaled: Monitor =
+        Monitor::from_mode("S".to_string(), Point { x: 0, y: 0 }, 3000, 2000, 1.5, 0).unwrap();
+    assert_eq!(
+        scaled.buffer_crop(Point { x: 100, y: 100 }, size(200, 100)),
+        crop(150, 150, 300, 150)
+    );
+}
+
+#[test]
+fn a_crop_reaching_the_panel_edge_stops_at_the_last_pixel() {
+    let scaled: Monitor =
+        Monitor::from_mode("S".to_string(), Point { x: 0, y: 0 }, 3000, 2000, 1.5, 0).unwrap();
+    assert_eq!(
+        scaled.buffer_crop(Point { x: 1800, y: 1233 }, size(200, 100)),
+        crop(2700, 1849, 300, 151)
+    );
+}
+
+#[test]
+fn a_crop_left_of_the_panel_has_no_buffer_box() {
+    assert_eq!(
+        panel(0).buffer_crop(Point { x: -1, y: 0 }, box_size()),
+        None
+    );
+}
+
+#[test]
+fn a_rotated_mode_keeps_its_pixels_in_panel_order() {
+    assert_eq!(panel(1).pixels, size(400, 200));
+}
+
+fn mode(pixel_w: u32, pixel_h: u32, scale: f64, transform: u8) -> Option<Size> {
     Monitor::from_mode(
         "DP-1".to_string(),
         Point { x: 10, y: 20 },
@@ -25,6 +144,7 @@ fn mode(pixel_w: u32, pixel_h: u32, scale: f64, transform: u8) -> Option<Monitor
         scale,
         transform,
     )
+    .map(|m: Monitor| m.size)
 }
 
 fn region(output: &str, global: (i32, i32), local: (i32, i32), w: u32, h: u32) -> Option<Region> {
@@ -56,47 +176,32 @@ const VIEW: Size = Size {
 
 #[test]
 fn unit_scale_keeps_pixel_size() {
-    assert_eq!(
-        mode(1920, 1080, 1.0, 0),
-        Some(monitor("DP-1", 10, 20, 1920, 1080))
-    );
+    assert_eq!(mode(1920, 1080, 1.0, 0), Some(size(1920, 1080)));
 }
 
 #[test]
 fn fractional_scale_divides_and_rounds() {
-    assert_eq!(
-        mode(2880, 1921, 1.5, 0),
-        Some(monitor("DP-1", 10, 20, 1920, 1281))
-    );
+    assert_eq!(mode(2880, 1921, 1.5, 0), Some(size(1920, 1281)));
 }
 
 #[test]
 fn rounding_ties_go_to_even() {
-    assert_eq!(mode(5, 7, 2.0, 0), Some(monitor("DP-1", 10, 20, 2, 4)));
+    assert_eq!(mode(5, 7, 2.0, 0), Some(size(2, 4)));
 }
 
 #[test]
 fn transform_one_swaps_axes() {
-    assert_eq!(
-        mode(1920, 1080, 1.0, 1),
-        Some(monitor("DP-1", 10, 20, 1080, 1920))
-    );
+    assert_eq!(mode(1920, 1080, 1.0, 1), Some(size(1080, 1920)));
 }
 
 #[test]
 fn transform_two_keeps_axes() {
-    assert_eq!(
-        mode(1920, 1080, 1.0, 2),
-        Some(monitor("DP-1", 10, 20, 1920, 1080))
-    );
+    assert_eq!(mode(1920, 1080, 1.0, 2), Some(size(1920, 1080)));
 }
 
 #[test]
 fn transform_seven_swaps_axes() {
-    assert_eq!(
-        mode(1920, 1080, 1.0, 7),
-        Some(monitor("DP-1", 10, 20, 1080, 1920))
-    );
+    assert_eq!(mode(1920, 1080, 1.0, 7), Some(size(1080, 1920)));
 }
 
 #[test]
@@ -141,10 +246,7 @@ fn width_rounding_to_zero_is_rejected() {
 
 #[test]
 fn largest_representable_width_is_kept() {
-    assert_eq!(
-        mode(u32::MAX, 1, 1.0, 0),
-        Some(monitor("DP-1", 10, 20, u32::MAX, 1))
-    );
+    assert_eq!(mode(u32::MAX, 1, 1.0, 0), Some(size(u32::MAX, 1)));
 }
 
 #[test]
