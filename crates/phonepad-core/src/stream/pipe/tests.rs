@@ -97,7 +97,7 @@ fn a_slow_link_still_gets_the_floor() {
 
 #[test]
 fn a_fast_link_is_capped_at_the_ceiling() {
-    assert_eq!(measured(1_000_000_000, 40_000).window(), CEILING_BYTES);
+    assert_eq!(measured(1_000_000_000, 40_000).window(), 4_194_304);
 }
 
 #[test]
