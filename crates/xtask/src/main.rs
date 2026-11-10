@@ -6,6 +6,7 @@ mod machine;
 mod mermaid;
 mod profile;
 mod report;
+mod testbed;
 mod views;
 mod workspace;
 

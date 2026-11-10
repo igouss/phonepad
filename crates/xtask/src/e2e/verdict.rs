@@ -1,9 +1,7 @@
 use crate::report::Check;
+use crate::testbed::Shutdown;
 use phonepad_h264::nal;
 use std::collections::BTreeSet;
-use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
 use std::time::Duration;
 
 pub const HEADER: usize = 9;
@@ -26,13 +24,6 @@ pub struct Decoded {
     pub frames: usize,
     pub distinct: usize,
     pub errors: String,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum Shutdown {
-    Exited { after: Duration, code: Option<i32> },
-    Hung { waited: Duration },
-    Early { code: Option<i32> },
 }
 
 pub fn tally(binary: &[Vec<u8>], texts: usize) -> Tally {
@@ -122,35 +113,6 @@ pub fn viewer_checks(
     ]
 }
 
-pub fn listening(line: &str, port: u16) -> bool {
-    line == format!("phonepad listening on http://127.0.0.1:{port}")
-}
-
-pub fn instance(inherited: Option<&str>, live: &[String]) -> Result<String, String> {
-    match (inherited, live) {
-        (Some(own), _) if live.iter().any(|sig: &String| sig == own) => Ok(own.to_owned()),
-        (_, [only]) => Ok(only.clone()),
-        (_, []) => Err(String::from(
-            "no Hyprland instance socket accepts a connection",
-        )),
-        (_, [_, _, ..]) => Err(format!(
-            "several live Hyprland instances {live:?} and HYPRLAND_INSTANCE_SIGNATURE names none of them"
-        )),
-    }
-}
-
-pub fn spawned(cmdline: &[u8], argv: &[&OsStr]) -> bool {
-    let args: Vec<&[u8]> = cmdline
-        .strip_suffix(b"\0")
-        .unwrap_or(cmdline)
-        .split(|&byte: &u8| byte == 0)
-        .collect();
-    args == argv
-        .iter()
-        .map(|arg: &&OsStr| arg.as_bytes())
-        .collect::<Vec<&[u8]>>()
-}
-
 pub fn status_check(gate: &str, refused: Result<u16, String>) -> Check {
     Check {
         gate: gate.to_owned(),
@@ -179,17 +141,6 @@ pub fn shutdown_check(shutdown: &Shutdown, limit: Duration) -> Check {
         ok,
         detail,
     }
-}
-
-pub fn executable(cargo_messages: &str, target: &str) -> Option<PathBuf> {
-    cargo_messages
-        .lines()
-        .filter_map(|line: &str| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|message: &serde_json::Value| {
-            message["reason"] == "compiler-artifact" && message["target"]["name"] == target
-        })
-        .filter_map(|message: serde_json::Value| message["executable"].as_str().map(PathBuf::from))
-        .next_back()
 }
 
 #[cfg(test)]
