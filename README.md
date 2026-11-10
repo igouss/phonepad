@@ -78,18 +78,17 @@ After changing code or the page: `cargo build --release && systemctl --user rest
 
 ## Measurements
 
-On an Intel UHD Graphics 630 (Hyprland renders there; AQ_DRM_DEVICES selects the iGPU), 2560×1440 at 60 Hz, a 648×1072 view, test clients on the same machine, a uinput mouse moving the pointer. CPU is % of one core, per thread from `/proc` over 5 s. A phone was streaming from a second phonepad instance on the same GPU during these runs.
+On an Intel UHD Graphics 630 (Hyprland renders there; AQ_DRM_DEVICES selects the iGPU), 2560×1440 at 60 Hz, a 648×1072 view, test clients on the same machine, a uinput mouse circling the pointer over a terminal. CPU is % of one core, per thread from `/proc` over 8 s; GPU engine time from DRM `fdinfo`. The animated wallpaper was playing (the test instance's `owe` is a stub) and another phonepad instance was streaming to a phone, so Hyprland and the render engine were busier than on a quiet desktop. *Presented views/s* replays each client's messages (latest decoded window × latest pointer, one view per 60 Hz display frame) and counts views that differ from the previous one by more than 200 pixels; a pan of a few pixels on flat content counts as no change, so it undercounts.
 
-| Clients | units/s per client | distinct frames/s | phonepad CPU | CPU per unit | Hyprland CPU |
-|---|---|---|---|---|---|
-| 1 | 23.0 | 23.0 | 1.4% | 0.61 ms | 11.6% |
-| 2 | 23.4 | 23.4 | 1.4% | 0.60 ms | 11.2% |
-| 4 | 23.2 | 23.2 | 1.4–1.8% | 0.60–0.78 ms | 11.4–12.0% |
-| 8 | 23.6 | 23.6 | 1.8% | 0.76 ms | 12.0% |
+| Build, pointer moving | units/s | presented views/s | pointer messages/s | KB/unit | phonepad CPU | Hyprland CPU |
+|---|---|---|---|---|---|---|
+| before (crop per move, encode on the capture thread) | 15.2–15.8 | 10.8–12.1 | – | 6.0 | 1.2–1.4% | 10.5–11.2% |
+| now, 1 client | 25.5 | 38.7–40.7 | 59.9 | 2.9–3.0 | 3.2–3.5% | 10.5–10.8% |
+| now, 4 clients (each) | 26.1 | 38.4–38.8 | 59.9 | 2.1 | 6.0% | 10.5% |
 
-- Capture and encode run once for all clients, so the cost does not grow with the number of phones. A client that stops acknowledging does not change the others' rate (23.0 units/s with one stalled client of two).
-- Pointer still: phonepad 0.8%, Hyprland 4.0%.
-- The conversion (`scale_vaapi`) runs on the render engine, which Hyprland and the terminal keep 70–98% busy while the pointer moves, so one conversion waits 14–55 ms in the queue; the encode itself takes about 1 ms on the video engine. With three conversions in flight the rate went from 11.8 to 36.9 units/s on the same desktop (`cargo xtask h264-check` reports the pipelined rate: 77–89 units/s against about 35 sequentially). `cargo xtask h264-check` measures the encoder alone: about 0.2 ms of CPU per unit, worst-frame PSNR about 39 dB.
+- Pointer still: before 22 units/s, 1.5% CPU, Hyprland 6.2%; now 29 units/s, 4.1%, Hyprland 9.4%, with the wallpaper playing behind the window. Every capture is encoded because Hyprland 0.56.2 reports every capture as fully damaged.
+- The phonepad CPU is mostly the VA-API driver preparing each conversion and encode (about 0.3–0.8 ms of CPU per unit); it scales with units/s, which follow Hyprland's commits. Each extra client costs about 0.9% for its socket writes (60 pointer messages and 26 units a second).
+- The conversion (`scale_vaapi`) runs on the render engine, which Hyprland and the terminal keep 70–98% busy while the pointer moves, so one conversion waits 14–55 ms in the queue; the encode itself takes about 1 ms on the video engine. `cargo xtask h264-check` measures the encoder alone: 0.2–0.5 ms of CPU per unit, worst-frame PSNR 38.9 dB, and the rate with three conversions in flight (77–299 units/s, load-dependent).
 
 ## Limitations
 
