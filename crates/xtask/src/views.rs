@@ -1,4 +1,4 @@
-use crate::machine::{Machine, Transition, explore};
+use crate::machine::{Labels, Machine, Transition, explore};
 use crate::mermaid::{Ids, escape_label};
 use crate::workspace::{Member, Package, Workspace};
 use phonepad_core::{desk, stream, wallpaper};
@@ -20,6 +20,7 @@ pub fn machines() -> BTreeMap<String, Machine> {
                 stream::all_inputs(),
                 stream::decide,
                 stream::evolve,
+                Labels::debug(),
             ),
         ),
         (
@@ -29,6 +30,7 @@ pub fn machines() -> BTreeMap<String, Machine> {
                 desk::all_inputs(),
                 desk::decide,
                 desk::evolve,
+                Labels::debug(),
             ),
         ),
         (
@@ -38,6 +40,7 @@ pub fn machines() -> BTreeMap<String, Machine> {
                 wallpaper::all_inputs(),
                 wallpaper::decide,
                 wallpaper::evolve,
+                Labels::debug(),
             ),
         ),
     ])

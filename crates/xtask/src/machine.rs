@@ -27,9 +27,26 @@ struct Registry {
     states: Vec<State>,
 }
 
+pub struct Labels<S, I> {
+    pub state: fn(&S) -> String,
+    pub input: fn(&I) -> String,
+}
+
+pub fn debug<T: Debug>(value: &T) -> String {
+    format!("{value:?}")
+}
+
+impl<S: Debug, I: Debug> Labels<S, I> {
+    pub fn debug() -> Labels<S, I> {
+        Labels {
+            state: debug::<S>,
+            input: debug::<I>,
+        }
+    }
+}
+
 impl Registry {
-    fn id<S: Debug>(&mut self, state: &S) -> String {
-        let label: String = format!("{state:?}");
+    fn id(&mut self, label: String) -> String {
         let id: String = self.ids.id("s_", &label);
         if !self.states.iter().any(|s| s.id == id) {
             self.states.push(State {
@@ -46,10 +63,11 @@ pub fn explore<S, I, E, C>(
     inputs: Vec<I>,
     decide: fn(&S, I) -> Decision<E, C>,
     evolve: fn(S, &E) -> S,
+    labels: Labels<S, I>,
 ) -> Machine
 where
-    S: Debug + Clone,
-    I: Debug + Clone,
+    S: Clone,
+    I: Clone,
     C: Debug,
 {
     let mut registry: Registry = Registry {
@@ -57,7 +75,7 @@ where
         states: Vec::new(),
     };
     for state in &states {
-        registry.id(state);
+        registry.id((labels.state)(state));
     }
     let mut transitions: Vec<Transition> = Vec::new();
     for state in &states {
@@ -68,9 +86,9 @@ where
             }
             let target: S = decision.events.iter().fold(state.clone(), evolve);
             transitions.push(Transition {
-                from: registry.id(state),
-                to: registry.id(&target),
-                input: format!("{input:?}"),
+                from: registry.id((labels.state)(state)),
+                to: registry.id((labels.state)(&target)),
+                input: (labels.input)(input),
                 commands: decision.commands.iter().map(|c| format!("{c:?}")).collect(),
             });
         }
@@ -83,7 +101,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{Machine, State, Transition, explore};
+    use super::{Labels, Machine, State, Transition, explore};
     use phonepad_core::decision::Decision;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,7 +158,7 @@ mod tests {
     #[test]
     fn no_states_give_an_empty_machine() {
         assert_eq!(
-            explore(vec![], vec![Press::Toggle], decide, evolve),
+            explore(vec![], vec![Press::Toggle], decide, evolve, Labels::debug()),
             Machine {
                 states: vec![],
                 transitions: vec![]
@@ -150,7 +168,13 @@ mod tests {
 
     #[test]
     fn inputs_without_events_produce_no_transitions() {
-        let machine: Machine = explore(vec![Lamp::Off], vec![Press::Ignore], decide, evolve);
+        let machine: Machine = explore(
+            vec![Lamp::Off],
+            vec![Press::Ignore],
+            decide,
+            evolve,
+            Labels::debug(),
+        );
         assert_eq!(
             machine,
             Machine {
@@ -162,7 +186,13 @@ mod tests {
 
     #[test]
     fn one_event_moves_to_the_evolved_state_and_discovers_it() {
-        let machine: Machine = explore(vec![Lamp::Off], vec![Press::Toggle], decide, evolve);
+        let machine: Machine = explore(
+            vec![Lamp::Off],
+            vec![Press::Toggle],
+            decide,
+            evolve,
+            Labels::debug(),
+        );
         let expected: Machine = Machine {
             states: vec![state("s_Off", "Off"), state("s_On", "On")],
             transitions: vec![Transition {
@@ -182,6 +212,7 @@ mod tests {
             vec![Press::Toggle, Press::Ignore],
             decide,
             evolve,
+            Labels::debug(),
         );
         let expected: Machine = Machine {
             states: vec![state("s_On", "On")],
@@ -191,6 +222,46 @@ mod tests {
                 input: String::from("Toggle"),
                 commands: vec![],
             }],
+        };
+        assert_eq!(machine, expected);
+    }
+
+    fn lit(_: &Lamp) -> String {
+        String::from("Lamp")
+    }
+
+    fn pressed(_: &Press) -> String {
+        String::from("press")
+    }
+
+    #[test]
+    fn states_and_inputs_are_named_by_their_labels_and_states_with_one_label_merge() {
+        let machine: Machine = explore(
+            vec![Lamp::Off, Lamp::On],
+            vec![Press::Toggle],
+            decide,
+            evolve,
+            Labels {
+                state: lit,
+                input: pressed,
+            },
+        );
+        let expected: Machine = Machine {
+            states: vec![state("s_Lamp", "Lamp")],
+            transitions: vec![
+                Transition {
+                    from: String::from("s_Lamp"),
+                    to: String::from("s_Lamp"),
+                    input: String::from("press"),
+                    commands: vec![String::from("PowerOn"), String::from("Log")],
+                },
+                Transition {
+                    from: String::from("s_Lamp"),
+                    to: String::from("s_Lamp"),
+                    input: String::from("press"),
+                    commands: vec![],
+                },
+            ],
         };
         assert_eq!(machine, expected);
     }
