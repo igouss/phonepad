@@ -17,7 +17,7 @@ pub struct Mover {
 }
 
 pub fn step(index: u32) -> (i32, i32) {
-    let angle: f64 = f64::from(index % STEPS_PER_TURN) * TAU / f64::from(STEPS_PER_TURN);
+    let angle: f64 = f64::from(index) * TAU / f64::from(STEPS_PER_TURN);
     (
         (STEP_PX * angle.cos()).round() as i32,
         (STEP_PX * angle.sin()).round() as i32,
@@ -52,7 +52,7 @@ fn circle(mut device: VirtualDevice, stop: &AtomicBool) -> Result<(), String> {
         device
             .emit(&events)
             .map_err(|e| format!("uinput mover: {e}"))?;
-        index = index.wrapping_add(1);
+        index = (index + 1) % STEPS_PER_TURN;
         thread::sleep(TICK);
     }
     Ok(())
@@ -96,7 +96,7 @@ mod tests {
     }
 
     #[test]
-    fn a_full_turn_starts_over() {
-        assert_eq!(step(STEPS_PER_TURN + 1), step(1));
+    fn the_last_step_closes_the_circle() {
+        assert_eq!(step(STEPS_PER_TURN - 1), (6, 0));
     }
 }

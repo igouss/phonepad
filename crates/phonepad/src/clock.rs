@@ -24,3 +24,24 @@ pub fn monotonic_ns() -> u64 {
         .saturating_mul(NANOS_PER_SECOND)
         .saturating_add(u64::try_from(now.tv_nsec).unwrap_or(0))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Clock, monotonic_ns};
+    use std::time::Duration;
+
+    #[test]
+    fn the_monotonic_clock_advances_by_the_time_slept() {
+        let before: u64 = monotonic_ns();
+        std::thread::sleep(Duration::from_millis(3));
+        let after: u64 = monotonic_ns();
+        assert!(after.saturating_sub(before) >= 3_000_000);
+    }
+
+    #[test]
+    fn the_session_clock_counts_milliseconds_since_its_start() {
+        let clock: Clock = Clock::start();
+        std::thread::sleep(Duration::from_millis(3));
+        assert!((3..1_000).contains(&clock.now_ms()));
+    }
+}

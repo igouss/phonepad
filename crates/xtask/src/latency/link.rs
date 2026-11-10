@@ -76,8 +76,12 @@ fn setting(mut profile: Profile, pair: &str) -> Result<Profile, String> {
                     .ok_or_else(|| format!("rate must be above zero, got `{value}`"))?,
             )
         }
-        "loss" if amount <= 100.0 => profile.loss_ppm = (amount * 1e4).round() as u64,
-        "loss" => return Err(format!("loss is a percentage, got `{value}`")),
+        "loss" => {
+            if amount > 100.0 {
+                return Err(format!("loss is a percentage, got `{value}`"));
+            }
+            profile.loss_ppm = (amount * 1e4).round() as u64
+        }
         _ => {
             return Err(format!(
                 "unknown setting `{key}`; use rtt, jitter, rate or loss"
@@ -144,6 +148,10 @@ pub fn schedule(
     }
 }
 
+pub fn lost(sample: u64, loss_ppm: u64) -> bool {
+    sample % PER_MILLION < loss_ppm
+}
+
 pub struct Rng(u64);
 
 impl Rng {
@@ -162,7 +170,7 @@ impl Rng {
         let unit: f64 = (self.next() >> (u64::BITS - MANTISSA)) as f64 / (1u64 << MANTISSA) as f64;
         Draw {
             jitter: unit * 2.0 - 1.0,
-            lost: self.next() % PER_MILLION < loss_ppm,
+            lost: lost(self.next(), loss_ppm),
         }
     }
 }

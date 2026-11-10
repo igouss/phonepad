@@ -150,6 +150,24 @@ fn units_and_draws_summarize_per_second_and_per_stage() {
 }
 
 #[test]
+fn only_gaps_longer_than_250_ms_are_stalls() {
+    assert_eq!(
+        summarize(
+            &[
+                drawn(0.0, 0.0, None),
+                drawn(0.0, 0.0, Some(40.0)),
+                drawn(0.0, 0.0, Some(250.0)),
+                drawn(0.0, 0.0, Some(250.5)),
+                drawn(0.0, 0.0, Some(900.0)),
+            ],
+            Duration::from_secs(1)
+        )
+        .stalls,
+        2
+    );
+}
+
+#[test]
 fn a_row_names_the_link_and_rounds_each_stage() {
     assert_eq!(
         row(

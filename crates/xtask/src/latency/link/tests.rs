@@ -140,8 +140,27 @@ fn a_setting_without_a_value_is_rejected() {
 }
 
 #[test]
-fn an_unknown_word_is_rejected() {
-    assert!(parse("fast").is_err());
+fn an_unknown_word_is_named_as_an_unknown_profile() {
+    assert!(
+        parse("fast")
+            .err()
+            .is_some_and(|error: String| error.starts_with("unknown profile `fast`"))
+    );
+}
+
+#[test]
+fn a_sample_below_the_loss_rate_is_lost() {
+    assert!(lost(1_009_999, 10_000));
+}
+
+#[test]
+fn a_sample_at_the_loss_rate_is_kept() {
+    assert!(!lost(10_000, 10_000));
+}
+
+#[test]
+fn no_loss_keeps_a_zero_sample() {
+    assert!(!lost(0, 0));
 }
 
 #[test]
