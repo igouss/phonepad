@@ -186,6 +186,37 @@ impl Browser {
             .map_or_else(|| evaluated.to_string(), str::to_owned))
     }
 
+    pub fn preload(&mut self, source: &str) -> Result<(), String> {
+        self.call(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({ "source": source }),
+        )
+        .map(drop)
+    }
+
+    pub fn evaluate(&mut self, expression: &str) -> Result<String, String> {
+        let evaluated: Value = self.call(
+            "Runtime.evaluate",
+            json!({ "expression": expression, "returnByValue": true }),
+        )?;
+        evaluated["result"]["value"]
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| format!("{expression} gave no string: {evaluated}"))
+    }
+
+    pub fn touch(&mut self, kind: &str, finger: Option<(f64, f64)>) -> Result<(), String> {
+        let points: Vec<Value> = finger
+            .into_iter()
+            .map(|(x, y): (f64, f64)| json!({ "x": x, "y": y, "id": 0 }))
+            .collect();
+        self.call(
+            "Input.dispatchTouchEvent",
+            json!({ "type": kind, "touchPoints": points }),
+        )
+        .map(drop)
+    }
+
     pub fn close(mut self) {
         self.session.clear();
         if let Err(error) = self.call("Browser.close", json!({})) {

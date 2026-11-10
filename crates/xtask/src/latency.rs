@@ -3,6 +3,7 @@ mod link;
 mod mover;
 mod proxy;
 mod stats;
+mod touch;
 
 use crate::report::{Check, Report};
 use crate::testbed::{self, Instance, Runtime, Scratch};
@@ -17,6 +18,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
+use touch::Driver;
 
 const DEFAULT_PORT: u16 = 8771;
 const LOGIN: &str = "test@example.invalid";
@@ -36,6 +38,7 @@ const BULK_BYTES: usize = 750_000;
 pub enum Run {
     Page(Vec<Profile>),
     Viewer(Vec<Profile>),
+    Touch(Vec<Profile>),
     Calibrate,
 }
 
@@ -49,6 +52,7 @@ pub struct Plan {
 #[derive(Default)]
 struct Words<'a> {
     viewer: bool,
+    touch: bool,
     port: Option<u16>,
     seconds: Option<u64>,
     rest: Vec<&'a str>,
@@ -67,6 +71,7 @@ fn words<'a>(all: &[&'a str]) -> Result<Words<'a>, String> {
                 (Some(("port", value)), _) => words.port = Some(option("port", value)?),
                 (Some(("seconds", value)), _) => words.seconds = Some(option("seconds", value)?),
                 (None, "viewer") => words.viewer = true,
+                (None, "touch") => words.touch = true,
                 (Some(_) | None, _) => words.rest.push(word),
             }
             Ok(words)
@@ -75,25 +80,30 @@ fn words<'a>(all: &[&'a str]) -> Result<Words<'a>, String> {
 
 pub fn plan(all: &[&str]) -> Result<Plan, String> {
     let words: Words = words(all)?;
-    let run: Run = match (words.viewer, words.rest.as_slice()) {
-        (_, []) => {
+    let run: Run = match (words.viewer, words.touch, words.rest.as_slice()) {
+        (true, true, _) => {
+            return Err(String::from(
+                "touch drives the page, the acking viewer has none",
+            ));
+        }
+        (_, _, []) => {
             return Err(String::from(
                 "latency needs a profile: lan, wifi, lte, bad-lte, rtt=<ms>,jitter=<ms>,rate=<Mbit/s>,loss=<%>, or calibrate",
             ));
         }
-        (false, ["calibrate"]) => Run::Calibrate,
-        (true, ["calibrate"]) => {
+        (false, false, ["calibrate"]) => Run::Calibrate,
+        (true, false, ["calibrate"]) | (false, true, ["calibrate"]) => {
             return Err(String::from("calibrate always uses the acking viewer"));
         }
-        (viewer, profiles) => {
+        (viewer, touch, profiles) => {
             let profiles: Vec<Profile> = profiles
                 .iter()
                 .map(|word: &&str| link::parse(word))
                 .collect::<Result<Vec<Profile>, String>>()?;
-            if viewer {
-                Run::Viewer(profiles)
-            } else {
-                Run::Page(profiles)
+            match (viewer, touch) {
+                (true, _) => Run::Viewer(profiles),
+                (false, true) => Run::Touch(profiles),
+                (false, false) => Run::Page(profiles),
             }
         }
     };
@@ -196,8 +206,11 @@ fn measure(
         .collect()
 }
 
-fn page(scratch: &Scratch, emulator: &Emulator) -> Result<Option<Browser>, String> {
+fn page(scratch: &Scratch, emulator: &Emulator, probe: bool) -> Result<Option<Browser>, String> {
     let mut browser: Browser = Browser::launch(&scratch.dir.join("chromium"))?;
+    if probe {
+        browser.preload(touch::PROBE)?;
+    }
     browser.open(&format!("http://127.0.0.1:{}/", emulator.port), LOGIN)?;
     println!(
         "INFO page {}x{} CSS px at {}x through the emulator on port {}: {}",
@@ -242,9 +255,14 @@ fn streamed(
 ) -> Result<Vec<Summary>, String> {
     let first: Profile = phases.first().cloned().ok_or("no profile to measure")?;
     let emulator: Emulator = Emulator::start(plan.port, first)?;
-    let mover: Mover = Mover::start()?;
+    let touching: bool = matches!(plan.run, Run::Touch(_));
+    let mover: Option<Mover> = if touching {
+        None
+    } else {
+        Some(Mover::start()?)
+    };
     let browser: Option<Browser> = match plan.run {
-        Run::Page(_) => page(scratch, &emulator)?,
+        Run::Page(_) | Run::Touch(_) => page(scratch, &emulator, touching)?,
         Run::Viewer(_) => viewer(
             &emulator,
             phases.len(),
@@ -258,10 +276,26 @@ fn streamed(
         true,
         format!("first acked unit after {:?}", first_unit(instance.lines())?),
     );
+    let (browser, driver): (Option<Browser>, Option<Driver>) = match (touching, browser) {
+        (true, Some(browser)) => (
+            None,
+            Some(Driver::start(browser, phases.len(), SETTLE, plan.measured)),
+        ),
+        (_, browser) => (browser, None),
+    };
     let summaries: Result<Vec<Summary>, String> =
         measure(report, instance, &emulator, phases, plan.measured);
     browser.into_iter().for_each(Browser::close);
-    mover.stop()?;
+    mover.map(Mover::stop).transpose()?;
+    if let Some(driver) = driver {
+        phases
+            .iter()
+            .zip(driver.finish()?)
+            .flat_map(|(profile, phase): (&Profile, touch::Phase)| {
+                touch::checks(&profile.name, &phase)
+            })
+            .for_each(|check: Check| report.record(check));
+    }
     summaries
 }
 
@@ -299,7 +333,7 @@ fn bench(report: &mut Report, bin: Option<PathBuf>, plan: Plan) -> Result<(), St
             .map_err(|e| format!("port {port} is not free: {e}"))?,
     );
     let phases: Vec<Profile> = match &plan.run {
-        Run::Page(profiles) | Run::Viewer(profiles) => profiles.clone(),
+        Run::Page(profiles) | Run::Viewer(profiles) | Run::Touch(profiles) => profiles.clone(),
         Run::Calibrate => calibration()?,
     };
     let scratch: Scratch = Scratch::create("latency")?;
@@ -333,7 +367,7 @@ fn bench(report: &mut Report, bin: Option<PathBuf>, plan: Plan) -> Result<(), St
             println!("{}", stats::row(profile, summary))
         });
     match plan.run {
-        Run::Page(_) | Run::Viewer(_) => Ok(()),
+        Run::Page(_) | Run::Viewer(_) | Run::Touch(_) => Ok(()),
         Run::Calibrate => calibrated(report, &summaries),
     }
 }

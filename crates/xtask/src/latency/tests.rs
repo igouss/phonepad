@@ -32,7 +32,7 @@ fn many_profiles_are_measured_in_order() {
     assert_eq!(
         plan(&["bad-lte", "lan"]).map(|p: Plan| match p.run {
             Run::Page(profiles) => profiles.into_iter().map(|p| p.name).collect(),
-            Run::Viewer(_) | Run::Calibrate => Vec::new(),
+            Run::Viewer(_) | Run::Touch(_) | Run::Calibrate => Vec::new(),
         }),
         Ok(vec![String::from("bad-lte"), String::from("lan")])
     );
@@ -115,4 +115,22 @@ fn the_default_port_keeps_the_default_runtime_dir() {
 #[test]
 fn another_port_gets_its_own_runtime_dir() {
     assert_eq!(runtime_name(8781), "pplat8781");
+}
+
+#[test]
+fn touch_measures_the_profiles_by_touching_the_page() {
+    assert_eq!(
+        plan(&["touch", "bad-lte"]),
+        Ok(default(Run::Touch(vec![link::named("bad-lte").unwrap()])))
+    );
+}
+
+#[test]
+fn touch_with_the_viewer_is_rejected() {
+    assert!(plan(&["touch", "viewer", "lte"]).is_err());
+}
+
+#[test]
+fn touch_calibrate_is_rejected() {
+    assert!(plan(&["touch", "calibrate"]).is_err());
 }
