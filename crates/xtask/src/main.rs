@@ -7,6 +7,7 @@ mod mermaid;
 mod profile;
 mod report;
 mod testbed;
+mod viewer;
 mod views;
 mod workspace;
 

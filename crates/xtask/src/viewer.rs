@@ -6,7 +6,10 @@ use tungstenite::handshake::client::Request;
 use tungstenite::http::HeaderValue;
 use tungstenite::{HandshakeError, Message, WebSocket};
 
-use super::verdict::{FRAME_HEADER, FRAME_TAG};
+pub const HEADER: usize = 9;
+pub const FRAME_HEADER: usize = 14;
+pub const FRAME_TAG: u8 = 0;
+pub const CURSOR_TAG: u8 = 1;
 
 const LOGIN_HEADER: &str = "Tailscale-User-Login";
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);

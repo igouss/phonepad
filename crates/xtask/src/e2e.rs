@@ -1,9 +1,8 @@
-mod client;
 mod verdict;
 
 use crate::report::{Check, Report};
 use crate::testbed::{self, Instance, Runtime, SHUTDOWN_PATIENCE, Scratch, Shutdown};
-use client::{Handshake, Received};
+use crate::viewer::{self, Handshake, Received};
 use std::ffi::OsString;
 use std::net::{Ipv4Addr, TcpListener};
 use std::path::{Path, PathBuf};
@@ -25,15 +24,15 @@ const STREAMING_BEFORE_SIGTERM: Duration = Duration::from_secs(1);
 type Viewing = JoinHandle<Result<Received, String>>;
 
 fn refused(login: Option<&str>) -> Result<u16, String> {
-    match client::handshake(PORT, login)? {
+    match viewer::handshake(PORT, login)? {
         Handshake::Upgraded(_) => Ok(101),
         Handshake::Refused(status) => Ok(status),
     }
 }
 
 fn watch(watched: Duration) -> Result<Received, String> {
-    match client::handshake(PORT, Some(LOGIN))? {
-        Handshake::Upgraded(socket) => client::watch(socket, VIEW, watched),
+    match viewer::handshake(PORT, Some(LOGIN))? {
+        Handshake::Upgraded(socket) => viewer::watch(socket, VIEW, watched),
         Handshake::Refused(status) => Err(format!("handshake refused with HTTP {status}")),
     }
 }

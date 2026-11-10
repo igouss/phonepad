@@ -4,10 +4,7 @@ use phonepad_h264::nal;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-pub const HEADER: usize = 9;
-pub const FRAME_HEADER: usize = 14;
-pub const FRAME_TAG: u8 = 0;
-pub const CURSOR_TAG: u8 = 1;
+pub use crate::viewer::{CURSOR_TAG, FRAME_HEADER, FRAME_TAG, HEADER};
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Tally {
