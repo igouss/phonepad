@@ -17,7 +17,7 @@ use crate::wire;
 use super::Unit;
 use super::plan::Shot;
 
-pub(super) const DEPTH: usize = 3;
+pub(super) const DEPTH: usize = 6;
 
 pub(super) struct Job {
     pub(super) cropped: Cropped,
