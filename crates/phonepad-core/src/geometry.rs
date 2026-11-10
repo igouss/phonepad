@@ -121,6 +121,16 @@ pub struct Crop {
     pub h: NonZeroU32,
 }
 
+impl Crop {
+    pub fn overlaps(&self, other: Crop) -> bool {
+        let spans = |a: u32, a_len: NonZeroU32, b: u32, b_len: NonZeroU32| -> bool {
+            u64::from(a) < u64::from(b) + u64::from(b_len.get())
+                && u64::from(b) < u64::from(a) + u64::from(a_len.get())
+        };
+        spans(self.x, self.w, other.x, other.w) && spans(self.y, self.h, other.y, other.h)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Monitor {
     pub name: String,

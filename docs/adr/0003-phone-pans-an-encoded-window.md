@@ -1,6 +1,6 @@
 # 0003: The phone pans inside an encoded window; the pointer travels as its own message
 
-Date: 2026-11-09. Status: accepted.
+Date: 2026-11-09. Status: accepted; the encode on every new capture it describes became an encode on every capture whose damage touches the window in [ADR 0004](0004-encode-only-damaged-windows.md).
 
 ## Weakest part at the time
 

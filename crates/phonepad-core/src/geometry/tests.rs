@@ -516,3 +516,84 @@ fn region_falls_back_to_first_monitor() {
         region("A", (0, 0), (0, 0), 640, 480)
     );
 }
+
+fn rect(x: u32, y: u32, w: u32, h: u32) -> Crop {
+    Crop {
+        x,
+        y,
+        w: nz(w),
+        h: nz(h),
+    }
+}
+
+const WINDOW: Crop = Crop {
+    x: 100,
+    y: 200,
+    w: NonZeroU32::new(50).unwrap(),
+    h: NonZeroU32::new(40).unwrap(),
+};
+
+#[test]
+fn a_rect_inside_overlaps() {
+    assert!(rect(110, 210, 5, 5).overlaps(WINDOW));
+}
+
+#[test]
+fn a_rect_covering_overlaps() {
+    assert!(rect(0, 0, 1000, 1000).overlaps(WINDOW));
+}
+
+#[test]
+fn a_rect_ending_where_the_window_starts_on_the_left_misses() {
+    assert!(!rect(90, 210, 10, 5).overlaps(WINDOW));
+}
+
+#[test]
+fn a_rect_one_pixel_into_the_left_edge_overlaps() {
+    assert!(rect(90, 210, 11, 5).overlaps(WINDOW));
+}
+
+#[test]
+fn a_rect_starting_where_the_window_ends_on_the_right_misses() {
+    assert!(!rect(150, 210, 10, 5).overlaps(WINDOW));
+}
+
+#[test]
+fn a_rect_on_the_last_column_overlaps() {
+    assert!(rect(149, 210, 10, 5).overlaps(WINDOW));
+}
+
+#[test]
+fn a_rect_ending_where_the_window_starts_above_misses() {
+    assert!(!rect(110, 190, 5, 10).overlaps(WINDOW));
+}
+
+#[test]
+fn a_rect_one_pixel_into_the_top_edge_overlaps() {
+    assert!(rect(110, 190, 5, 11).overlaps(WINDOW));
+}
+
+#[test]
+fn a_rect_starting_where_the_window_ends_below_misses() {
+    assert!(!rect(110, 240, 5, 10).overlaps(WINDOW));
+}
+
+#[test]
+fn a_rect_on_the_last_row_overlaps() {
+    assert!(rect(110, 239, 5, 10).overlaps(WINDOW));
+}
+
+#[test]
+fn a_rect_level_with_the_window_but_beside_it_misses() {
+    assert!(!rect(300, 200, 50, 40).overlaps(WINDOW));
+}
+
+#[test]
+fn a_rect_in_line_with_the_window_but_below_it_misses() {
+    assert!(!rect(100, 400, 50, 40).overlaps(WINDOW));
+}
+
+#[test]
+fn rects_at_the_end_of_the_coordinate_range_overlap_without_overflow() {
+    assert!(rect(u32::MAX, u32::MAX, u32::MAX, u32::MAX).overlaps(rect(u32::MAX, u32::MAX, 1, 1)));
+}

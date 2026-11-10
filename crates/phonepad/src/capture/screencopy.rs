@@ -39,7 +39,8 @@ mod dispatch;
 use super::cursor::Sampler;
 use super::lane::{Job, Lane};
 use super::plan::{
-    self, Buffer, Constraints, Pending, Pixels, Schedule, Shape, Shot, Slot, Target, schedule,
+    self, Buffer, Constraints, Pending, Pixels, Schedule, Shape, Shot, Shown, Slot, Target,
+    schedule,
 };
 use super::{Feed, KeyframeRequest, Unit};
 
@@ -71,8 +72,8 @@ struct Pool {
     surfaces: Vec<Surface>,
     slots: Vec<Slot<ExtImageCopyCaptureFrameV1>>,
     presented: Vec<u64>,
-    new_frame: bool,
-    shown: Option<Shot>,
+    changed: bool,
+    shown: Option<Shown>,
     encoded_at: Option<Instant>,
     keyframe_at: Option<Instant>,
 }
@@ -284,7 +285,7 @@ impl Pool {
             surfaces,
             slots: (0..POOL).map(|_| Slot::Free).collect(),
             presented: vec![0; POOL],
-            new_frame: false,
+            changed: false,
             shown: None,
             encoded_at: None,
             keyframe_at: None,
@@ -381,7 +382,11 @@ impl State {
             frame.attach_buffer(&pool.surfaces[index].buffer);
             frame.damage_buffer(0, 0, width, height);
             frame.capture();
-            pool.slots[index] = Slot::Capturing { frame, session };
+            pool.slots[index] = Slot::Capturing {
+                frame,
+                session,
+                damage: Vec::new(),
+            };
         }
         Ok(())
     }
@@ -394,7 +399,7 @@ impl State {
             return Ok(WAKE);
         };
         let pending: Pending = Pending {
-            new_frame: pool.new_frame,
+            changed: pool.changed,
             keyframe: plan::keyframe_due(
                 self.keyframe.pending(),
                 pool.keyframe_at.map(|at: Instant| at.elapsed()),
@@ -402,7 +407,12 @@ impl State {
             encoder_busy: pool.lane.busy(),
         };
         let since_last: Option<Duration> = pool.encoded_at.map(|at: Instant| at.elapsed());
-        match schedule(pending, pool.shown, wanted, since_last) {
+        match schedule(
+            pending,
+            pool.shown.map(|shown: Shown| shown.shot),
+            wanted,
+            since_last,
+        ) {
             Schedule::Idle | Schedule::Busy => Ok(WAKE),
             Schedule::WaitFor(left) => Ok(left.min(WAKE)),
             Schedule::EncodeNow => {
@@ -424,8 +434,11 @@ impl State {
                     shot: wanted,
                     captured_ns,
                 })?;
-                pool.new_frame = false;
-                pool.shown = Some(wanted);
+                pool.changed = false;
+                pool.shown = Some(Shown {
+                    shot: wanted,
+                    stamp: captured_ns,
+                });
                 pool.encoded_at = Some(Instant::now());
                 if pending.keyframe || pool.keyframe_at.is_none() {
                     pool.keyframe_at = pool.encoded_at;
@@ -504,8 +517,22 @@ impl State {
             ext_image_copy_capture_frame_v1::Event::Ready => {
                 frame.destroy();
                 let stamp: u64 = pool.presented.get(index).copied().unwrap_or(0);
-                if plan::arrive(&mut pool.slots, index, stamp) {
-                    pool.new_frame = true;
+                pool.changed |=
+                    pool.slots
+                        .get(index)
+                        .is_some_and(|slot: &Slot<ExtImageCopyCaptureFrameV1>| {
+                            plan::changes_shown(slot, stamp, pool.shown)
+                        });
+                plan::arrive(&mut pool.slots, index, stamp);
+            }
+            ext_image_copy_capture_frame_v1::Event::Damage {
+                x,
+                y,
+                width,
+                height,
+            } => {
+                if let Some(rect) = plan::damage(x, y, width, height) {
+                    plan::damaged(&mut pool.slots, index, rect);
                 }
             }
             ext_image_copy_capture_frame_v1::Event::Failed { .. } => {
@@ -515,9 +542,7 @@ impl State {
                 }
                 self.failed = true;
             }
-            ext_image_copy_capture_frame_v1::Event::Transform { .. }
-            | ext_image_copy_capture_frame_v1::Event::Damage { .. }
-            | _ => {}
+            ext_image_copy_capture_frame_v1::Event::Transform { .. } | _ => {}
         }
     }
 }

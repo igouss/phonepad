@@ -1,3 +1,4 @@
+use std::num::NonZeroU32;
 use std::time::Duration;
 
 use phonepad_core::geometry::{Crop, Monitor, Point, Region, Size, Transform, window_around};
@@ -69,8 +70,20 @@ pub(super) enum Misfit {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Slot<F> {
     Free,
-    Capturing { frame: F, session: usize },
-    Held { stamp: u64 },
+    Capturing {
+        frame: F,
+        session: usize,
+        damage: Vec<Crop>,
+    },
+    Held {
+        stamp: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Shown {
+    pub(super) shot: Shot,
+    pub(super) stamp: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,7 +96,7 @@ pub(super) enum Schedule {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Pending {
-    pub(super) new_frame: bool,
+    pub(super) changed: bool,
     pub(super) keyframe: bool,
     pub(super) encoder_busy: bool,
 }
@@ -176,21 +189,48 @@ pub(super) fn to_issue<F>(slots: &[Slot<F>], pinned: &[bool], in_flight: usize) 
         .collect()
 }
 
-pub(super) fn arrive<F>(slots: &mut [Slot<F>], index: usize, stamp: u64) -> bool {
+pub(super) fn arrive<F>(slots: &mut [Slot<F>], index: usize, stamp: u64) {
     match held(slots) {
-        Some((_, held)) if held >= stamp => {
-            slots[index] = Slot::Free;
-            false
-        }
+        Some((_, held)) if held >= stamp => slots[index] = Slot::Free,
         Some((previous, _)) => {
             slots[previous] = Slot::Free;
             slots[index] = Slot::Held { stamp };
-            true
         }
-        None => {
-            slots[index] = Slot::Held { stamp };
-            true
+        None => slots[index] = Slot::Held { stamp },
+    }
+}
+
+pub(super) fn damage(x: i32, y: i32, width: i32, height: i32) -> Option<Crop> {
+    let clip = |start: i32, len: i32| -> Option<(u32, NonZeroU32)> {
+        let first: i64 = i64::from(start).max(0);
+        let end: i64 = i64::from(start) + i64::from(len);
+        Some((
+            u32::try_from(first).ok()?,
+            NonZeroU32::new(u32::try_from(end - first).ok()?)?,
+        ))
+    };
+    let (x, w): (u32, NonZeroU32) = clip(x, width)?;
+    let (y, h): (u32, NonZeroU32) = clip(y, height)?;
+    Some(Crop { x, y, w, h })
+}
+
+pub(super) fn damaged<F>(slots: &mut [Slot<F>], index: usize, rect: Crop) {
+    match slots.get_mut(index) {
+        Some(Slot::Capturing { damage, .. }) => damage.push(rect),
+        Some(Slot::Free | Slot::Held { .. }) | None => {}
+    }
+}
+
+pub(super) fn changes_shown<F>(slot: &Slot<F>, stamp: u64, shown: Option<Shown>) -> bool {
+    match (slot, shown) {
+        (Slot::Capturing { .. }, None) => true,
+        (Slot::Capturing { damage, .. }, Some(shown)) => {
+            stamp > shown.stamp
+                && damage
+                    .iter()
+                    .any(|rect: &Crop| rect.overlaps(shown.shot.crop))
         }
+        (Slot::Free | Slot::Held { .. }, Some(_) | None) => false,
     }
 }
 
@@ -206,7 +246,7 @@ pub(super) fn schedule(
     wanted: Shot,
     since_last: Option<Duration>,
 ) -> Schedule {
-    let changed: bool = pending.new_frame || pending.keyframe || shown != Some(wanted);
+    let changed: bool = pending.changed || pending.keyframe || shown != Some(wanted);
     match (changed, pending.encoder_busy, since_last) {
         (false, _, _) => Schedule::Idle,
         (true, true, _) => Schedule::Busy,

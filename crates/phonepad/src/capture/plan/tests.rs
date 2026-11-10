@@ -32,27 +32,27 @@ fn crop(x: u32, y: u32, w: u32, h: u32) -> Crop {
     }
 }
 const QUIET: Pending = Pending {
-    new_frame: false,
+    changed: false,
     keyframe: false,
     encoder_busy: false,
 };
 const FRAME: Pending = Pending {
-    new_frame: true,
+    changed: true,
     keyframe: false,
     encoder_busy: false,
 };
 const KEY: Pending = Pending {
-    new_frame: false,
+    changed: false,
     keyframe: true,
     encoder_busy: false,
 };
 const FRAME_WHILE_BUSY: Pending = Pending {
-    new_frame: true,
+    changed: true,
     keyframe: false,
     encoder_busy: true,
 };
 const QUIET_WHILE_BUSY: Pending = Pending {
-    new_frame: false,
+    changed: false,
     keyframe: false,
     encoder_busy: true,
 };
@@ -335,12 +335,21 @@ fn capturing() -> Slot<()> {
     Slot::Capturing {
         frame: (),
         session: 0,
+        damage: Vec::new(),
     }
 }
 
-fn arrived(mut slots: Vec<Slot<()>>, index: usize, stamp: u64) -> (bool, Vec<Slot<()>>) {
-    let newest: bool = arrive(&mut slots, index, stamp);
-    (newest, slots)
+fn capturing_with(damage: Vec<Crop>) -> Slot<()> {
+    Slot::Capturing {
+        frame: (),
+        session: 0,
+        damage,
+    }
+}
+
+fn arrived(mut slots: Vec<Slot<()>>, index: usize, stamp: u64) -> Vec<Slot<()>> {
+    arrive(&mut slots, index, stamp);
+    slots
 }
 
 #[test]
@@ -360,7 +369,7 @@ fn the_held_slot_carries_its_stamp() {
 fn the_first_frame_is_held() {
     assert_eq!(
         arrived(vec![capturing(), Slot::Free], 0, 5),
-        (true, vec![Slot::Held { stamp: 5 }, Slot::Free])
+        vec![Slot::Held { stamp: 5 }, Slot::Free]
     );
 }
 
@@ -372,7 +381,7 @@ fn a_later_frame_replaces_the_held_one() {
             1,
             6
         ),
-        (true, vec![Slot::Free, Slot::Held { stamp: 6 }, capturing()])
+        vec![Slot::Free, Slot::Held { stamp: 6 }, capturing()]
     );
 }
 
@@ -380,7 +389,7 @@ fn a_later_frame_replaces_the_held_one() {
 fn a_frame_with_the_held_stamp_is_a_duplicate_and_freed() {
     assert_eq!(
         arrived(vec![Slot::Held { stamp: 5 }, capturing()], 1, 5),
-        (false, vec![Slot::Held { stamp: 5 }, Slot::Free])
+        vec![Slot::Held { stamp: 5 }, Slot::Free]
     );
 }
 
@@ -388,7 +397,7 @@ fn a_frame_with_the_held_stamp_is_a_duplicate_and_freed() {
 fn an_older_frame_is_stale_and_freed() {
     assert_eq!(
         arrived(vec![Slot::Held { stamp: 6 }, capturing()], 1, 5),
-        (false, vec![Slot::Held { stamp: 6 }, Slot::Free])
+        vec![Slot::Held { stamp: 6 }, Slot::Free]
     );
 }
 
@@ -539,4 +548,189 @@ fn a_change_just_before_the_interval_waits() {
         ),
         Schedule::WaitFor(Duration::from_micros(1))
     );
+}
+
+#[test]
+fn damage_on_the_buffer_is_kept_as_reported() {
+    assert_eq!(damage(10, 20, 30, 40), Some(crop(10, 20, 30, 40)));
+}
+
+#[test]
+fn damage_left_of_the_buffer_is_clipped_to_its_first_column() {
+    assert_eq!(damage(-10, 20, 30, 40), Some(crop(0, 20, 20, 40)));
+}
+
+#[test]
+fn damage_above_the_buffer_is_clipped_to_its_first_row() {
+    assert_eq!(damage(10, -20, 30, 40), Some(crop(10, 0, 30, 20)));
+}
+
+#[test]
+fn damage_wholly_left_of_the_buffer_is_none() {
+    assert_eq!(damage(-30, 20, 30, 40), None);
+}
+
+#[test]
+fn damage_wholly_above_the_buffer_is_none() {
+    assert_eq!(damage(10, -40, 30, 40), None);
+}
+
+#[test]
+fn damage_of_no_width_is_none() {
+    assert_eq!(damage(10, 20, 0, 40), None);
+}
+
+#[test]
+fn damage_of_no_height_is_none() {
+    assert_eq!(damage(10, 20, 30, 0), None);
+}
+
+#[test]
+fn damage_of_negative_width_is_none() {
+    assert_eq!(damage(10, 20, -30, 40), None);
+}
+
+#[test]
+fn damage_at_the_end_of_the_coordinate_range_converts_without_overflow() {
+    assert_eq!(
+        damage(i32::MAX, i32::MAX, i32::MAX, i32::MAX),
+        Some(crop(
+            i32::MAX.unsigned_abs(),
+            i32::MAX.unsigned_abs(),
+            i32::MAX.unsigned_abs(),
+            i32::MAX.unsigned_abs()
+        ))
+    );
+}
+
+const OUTSIDE: Crop = Crop {
+    x: 0,
+    y: 0,
+    w: NonZeroU32::new(50).unwrap(),
+    h: NonZeroU32::new(50).unwrap(),
+};
+const INSIDE: Crop = Crop {
+    x: 300,
+    y: 300,
+    w: NonZeroU32::new(50).unwrap(),
+    h: NonZeroU32::new(50).unwrap(),
+};
+const SHOWN: Shown = Shown {
+    shot: HERE,
+    stamp: 5,
+};
+
+fn after_damage(mut slots: Vec<Slot<()>>, index: usize, rect: Crop) -> Vec<Slot<()>> {
+    damaged(&mut slots, index, rect);
+    slots
+}
+
+#[test]
+fn damage_to_a_capturing_slot_is_collected() {
+    assert_eq!(
+        after_damage(vec![Slot::Free, capturing()], 1, INSIDE),
+        vec![Slot::Free, capturing_with(vec![INSIDE])]
+    );
+}
+
+#[test]
+fn more_damage_to_a_capturing_slot_is_added_to_what_it_has() {
+    assert_eq!(
+        after_damage(vec![capturing_with(vec![INSIDE])], 0, OUTSIDE),
+        vec![capturing_with(vec![INSIDE, OUTSIDE])]
+    );
+}
+
+#[test]
+fn damage_to_a_free_slot_is_dropped() {
+    assert_eq!(
+        after_damage(vec![Slot::Free, capturing()], 0, INSIDE),
+        vec![Slot::Free, capturing()]
+    );
+}
+
+#[test]
+fn damage_to_a_held_slot_is_dropped() {
+    assert_eq!(
+        after_damage(vec![Slot::Held { stamp: 1 }], 0, INSIDE),
+        vec![Slot::Held { stamp: 1 }]
+    );
+}
+
+#[test]
+fn damage_to_no_slot_is_dropped() {
+    assert_eq!(
+        after_damage(vec![capturing()], 1, INSIDE),
+        vec![capturing()]
+    );
+}
+
+#[test]
+fn a_frame_when_nothing_is_shown_changes_it() {
+    assert!(changes_shown(&capturing(), 1, None));
+}
+
+#[test]
+fn a_frame_with_no_damage_changes_nothing() {
+    assert!(!changes_shown(&capturing(), 6, Some(SHOWN)));
+}
+
+#[test]
+fn a_newer_frame_damaged_inside_the_shown_crop_changes_it() {
+    assert!(changes_shown(&capturing_with(vec![INSIDE]), 6, Some(SHOWN)));
+}
+
+#[test]
+fn a_newer_frame_damaged_only_outside_the_shown_crop_changes_nothing() {
+    assert!(!changes_shown(
+        &capturing_with(vec![OUTSIDE]),
+        6,
+        Some(SHOWN)
+    ));
+}
+
+#[test]
+fn a_newer_frame_damaged_in_many_places_one_inside_changes_it() {
+    assert!(changes_shown(
+        &capturing_with(vec![OUTSIDE, INSIDE]),
+        6,
+        Some(SHOWN)
+    ));
+}
+
+#[test]
+fn a_newer_frame_damaged_in_many_places_all_outside_changes_nothing() {
+    assert!(!changes_shown(
+        &capturing_with(vec![OUTSIDE, crop(2000, 2000, 10, 10)]),
+        6,
+        Some(SHOWN)
+    ));
+}
+
+#[test]
+fn a_frame_of_the_shown_moment_from_the_other_session_changes_nothing() {
+    assert!(!changes_shown(
+        &capturing_with(vec![INSIDE]),
+        5,
+        Some(SHOWN)
+    ));
+}
+
+#[test]
+fn an_older_frame_damaged_inside_changes_nothing() {
+    assert!(!changes_shown(
+        &capturing_with(vec![INSIDE]),
+        4,
+        Some(SHOWN)
+    ));
+}
+
+#[test]
+fn a_free_slot_changes_nothing() {
+    assert!(!changes_shown(&Slot::<()>::Free, 6, None));
+}
+
+#[test]
+fn a_held_slot_changes_nothing() {
+    assert!(!changes_shown(&Slot::<()>::Held { stamp: 6 }, 6, None));
 }
