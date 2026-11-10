@@ -1,13 +1,10 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
 use std::time::{Duration, Instant};
 
 use phonepad_core::geometry::Point;
-use tokio::sync::watch;
 
 use crate::hypr;
 
-const CURSOR_SAMPLE_MOVING: Duration = Duration::from_millis(16);
+const CURSOR_SAMPLE_MOVING: Duration = Duration::from_micros(16_667);
 const CURSOR_SAMPLE_STILL: Duration = Duration::from_millis(50);
 const CURSOR_SETTLE: Duration = Duration::from_secs(1);
 
@@ -19,35 +16,68 @@ fn sample_period(still_for: Duration) -> Duration {
     }
 }
 
-pub(super) fn sample_cursor(stop: &AtomicBool, cursor: &watch::Sender<Option<Point>>) {
-    let mut failing: bool = false;
-    let mut moved_at: Instant = Instant::now();
-    while !stop.load(Ordering::Relaxed) {
+fn until_due(sampled_at: Option<Instant>, moved_at: Instant, now: Instant) -> Duration {
+    sampled_at.map_or(Duration::ZERO, |sampled: Instant| {
+        (sampled + sample_period(now.saturating_duration_since(moved_at)))
+            .saturating_duration_since(now)
+    })
+}
+
+pub(super) struct Sampler {
+    at: Option<Point>,
+    sampled_at: Option<Instant>,
+    moved_at: Instant,
+    failing: bool,
+}
+
+impl Sampler {
+    pub(super) fn new(now: Instant) -> Sampler {
+        Sampler {
+            at: None,
+            sampled_at: None,
+            moved_at: now,
+            failing: false,
+        }
+    }
+
+    pub(super) fn at(&self) -> Option<Point> {
+        self.at
+    }
+
+    pub(super) fn until_due(&self, now: Instant) -> Duration {
+        until_due(self.sampled_at, self.moved_at, now)
+    }
+
+    pub(super) fn sample_if_due(&mut self, now: Instant) -> bool {
+        if !self.until_due(now).is_zero() {
+            return false;
+        }
+        self.sampled_at = Some(now);
         match hypr::cursor() {
             Ok(at) => {
-                if cursor.send_if_modified(|seen: &mut Option<Point>| {
-                    let moved: bool = *seen != Some(at);
-                    *seen = Some(at);
-                    moved
-                }) {
-                    moved_at = Instant::now();
+                self.failing = false;
+                let moved: bool = self.at != Some(at);
+                if moved {
+                    self.at = Some(at);
+                    self.moved_at = now;
                 }
-                failing = false;
+                moved
             }
             Err(err) => {
-                if !failing {
+                if !self.failing {
                     eprintln!("cursor sample: {err:#}");
                 }
-                failing = true;
+                self.failing = true;
+                false
             }
         }
-        thread::sleep(sample_period(moved_at.elapsed()));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn cursor_that_just_moved_is_sampled_at_frame_rate() {
         assert_eq!(sample_period(Duration::ZERO), CURSOR_SAMPLE_MOVING);
@@ -64,5 +94,39 @@ mod tests {
     #[test]
     fn settled_cursor_is_sampled_slowly() {
         assert_eq!(sample_period(CURSOR_SETTLE), CURSOR_SAMPLE_STILL);
+    }
+
+    #[test]
+    fn a_cursor_never_sampled_is_due_now() {
+        let now: Instant = Instant::now();
+        assert_eq!(until_due(None, now, now), Duration::ZERO);
+    }
+
+    #[test]
+    fn a_moving_cursor_is_due_one_frame_after_its_sample() {
+        let now: Instant = Instant::now();
+        assert_eq!(
+            until_due(Some(now), now, now + Duration::from_millis(10)),
+            CURSOR_SAMPLE_MOVING - Duration::from_millis(10)
+        );
+    }
+
+    #[test]
+    fn a_settled_cursor_is_due_after_the_slow_period() {
+        let now: Instant = Instant::now();
+        let sampled: Instant = now + CURSOR_SETTLE;
+        assert_eq!(
+            until_due(Some(sampled), now, sampled + Duration::from_millis(10)),
+            CURSOR_SAMPLE_STILL - Duration::from_millis(10)
+        );
+    }
+
+    #[test]
+    fn an_overdue_sample_is_due_now() {
+        let now: Instant = Instant::now();
+        assert_eq!(
+            until_due(Some(now), now, now + Duration::from_secs(5)),
+            Duration::ZERO
+        );
     }
 }

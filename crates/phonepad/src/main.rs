@@ -67,7 +67,6 @@ async fn serve() -> anyhow::Result<()> {
         render_node: env::var_os("PHONEPAD_RENDER_NODE")
             .map_or_else(|| PathBuf::from(DEFAULT_RENDER_NODE), PathBuf::from),
         view: view_watch,
-        cursor: watch::Sender::new(None),
         units: units.clone(),
         keyframe: keyframe.clone(),
     };

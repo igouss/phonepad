@@ -32,6 +32,7 @@ use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::{
 
 use crate::hypr;
 
+use super::cursor::Sampler;
 use super::lane::{Job, Lane};
 use super::plan::{
     self, CopyMode, Offer, Pending, Pixels, Schedule, Shape, Shot, Slot, Target, schedule,
@@ -72,7 +73,7 @@ struct State {
     manager: Option<ZwlrScreencopyManagerV1>,
     outputs: Vec<NamedOutput>,
     view: watch::Receiver<Option<Size>>,
-    cursor: watch::Receiver<Option<Point>>,
+    sampler: Sampler,
     units: broadcast::Sender<Unit>,
     keyframe: KeyframeRequest,
     target: Option<Target>,
@@ -93,7 +94,7 @@ pub(super) fn run(stop: &AtomicBool, feed: Feed) -> anyhow::Result<()> {
         manager: None,
         outputs: Vec::new(),
         view: feed.view,
-        cursor: feed.cursor.subscribe(),
+        sampler: Sampler::new(Instant::now()),
         units: feed.units,
         keyframe: feed.keyframe,
         target: None,
@@ -137,6 +138,7 @@ pub(super) fn run(stop: &AtomicBool, feed: Feed) -> anyhow::Result<()> {
             state.issue(&qh)?;
             wait_for = state.encode_if_due(target.shot)?;
         }
+        wait_for = wait_for.min(state.sampler.until_due(Instant::now()));
         wait(&mut queue, &mut state, wait_for)?;
     }
     close(&mut queue, &mut state)
@@ -262,13 +264,13 @@ fn wl_buffer(
 
 impl State {
     fn refresh_target(&mut self) -> anyhow::Result<()> {
-        let changed: bool =
-            self.view.has_changed().unwrap_or(false) || self.cursor.has_changed().unwrap_or(false);
+        let moved: bool = self.sampler.sample_if_due(Instant::now());
+        let changed: bool = self.view.has_changed().unwrap_or(false) || moved;
         if !changed && self.target.is_some() {
             return Ok(());
         }
         let view: Option<Size> = *self.view.borrow_and_update();
-        let cursor: Option<Point> = *self.cursor.borrow_and_update();
+        let cursor: Option<Point> = self.sampler.at();
         let (Some(view), Some(cursor)) = (view, cursor) else {
             self.target = None;
             return Ok(());

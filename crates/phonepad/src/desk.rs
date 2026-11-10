@@ -112,16 +112,20 @@ impl DeskShell {
         self.capture_generation += 1;
         let generation: u64 = self.capture_generation;
         let inbox: mpsc::Sender<DeskMessage> = self.inbox.clone();
-        let capture: Capture = Capture::start(
+        match Capture::start(
             self.feed.clone(),
             Box::new(move || {
                 let _ = inbox.blocking_send(DeskMessage::CaptureExited(generation));
             }),
-        );
-        self.capture = Some(RunningCapture {
-            generation,
-            capture,
-        });
+        ) {
+            Ok(capture) => {
+                self.capture = Some(RunningCapture {
+                    generation,
+                    capture,
+                })
+            }
+            Err(err) => eprintln!("capture: spawn the thread: {err}"),
+        }
     }
 
     async fn stop_capture(&mut self) {
@@ -187,14 +191,14 @@ impl DeskShell {
 }
 
 async fn join_bounded(capture: Capture) {
-    let threads: [std::thread::JoinHandle<()>; 2] = capture.stop();
+    let thread: std::thread::JoinHandle<()> = capture.stop();
     match time::timeout(
         CAPTURE_STOP_BOUND,
-        task::spawn_blocking(move || threads.map(std::thread::JoinHandle::join)),
+        task::spawn_blocking(move || thread.join()),
     )
     .await
     {
-        Ok(Ok([Ok(()), Ok(())])) => {}
+        Ok(Ok(Ok(()))) => {}
         Ok(Ok(_)) => eprintln!("capture: thread panicked"),
         Ok(Err(err)) => eprintln!("capture: join task failed: {err}"),
         Err(_) => {

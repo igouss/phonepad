@@ -9,11 +9,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
 use axum::body::Bytes;
-use phonepad_core::geometry::{Point, Size};
+use phonepad_core::geometry::Size;
 use phonepad_core::stream::UnitKind;
 use tokio::sync::{broadcast, watch};
 
-use self::cursor::sample_cursor;
 use self::screencopy::run;
 
 #[derive(Clone, Debug)]
@@ -43,7 +42,6 @@ impl KeyframeRequest {
 pub struct Feed {
     pub render_node: PathBuf,
     pub view: watch::Receiver<Option<Size>>,
-    pub cursor: watch::Sender<Option<Point>>,
     pub units: broadcast::Sender<Unit>,
     pub keyframe: KeyframeRequest,
 }
@@ -51,7 +49,6 @@ pub struct Feed {
 pub struct Capture {
     stop: Arc<AtomicBool>,
     thread: JoinHandle<()>,
-    sampler: JoinHandle<()>,
 }
 
 struct ExitNotice(Option<Box<dyn FnOnce() + Send>>);
@@ -65,28 +62,24 @@ impl Drop for ExitNotice {
 }
 
 impl Capture {
-    pub fn start(feed: Feed, on_exit: Box<dyn FnOnce() + Send>) -> Capture {
+    pub fn start(feed: Feed, on_exit: Box<dyn FnOnce() + Send>) -> std::io::Result<Capture> {
         let stop: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         let stopped: Arc<AtomicBool> = Arc::clone(&stop);
-        let sampling: Arc<AtomicBool> = Arc::clone(&stop);
-        let cursor: watch::Sender<Option<Point>> = feed.cursor.clone();
-        let sampler: JoinHandle<()> = thread::spawn(move || sample_cursor(&sampling, &cursor));
-        let thread: JoinHandle<()> = thread::spawn(move || {
-            let _notice: ExitNotice = ExitNotice(Some(on_exit));
-            if let Err(err) = run(&stopped, feed) {
-                eprintln!("capture: {err:#}");
-            }
-        });
-        Capture {
-            stop,
-            thread,
-            sampler,
-        }
+        let thread: JoinHandle<()> =
+            thread::Builder::new()
+                .name("capture".to_owned())
+                .spawn(move || {
+                    let _notice: ExitNotice = ExitNotice(Some(on_exit));
+                    if let Err(err) = run(&stopped, feed) {
+                        eprintln!("capture: {err:#}");
+                    }
+                })?;
+        Ok(Capture { stop, thread })
     }
 
-    pub fn stop(self) -> [JoinHandle<()>; 2] {
+    pub fn stop(self) -> JoinHandle<()> {
         self.stop.store(true, Ordering::Relaxed);
-        [self.thread, self.sampler]
+        self.thread
     }
 }
 
