@@ -87,7 +87,18 @@ impl DeskShell {
 
     async fn step(&mut self, input: DeskInput) {
         let decision: Decision<DeskEvent, DeskCommand> = desk::decide(&self.desk, input);
+        let before: Desk = self.desk;
         self.desk = decision.events.iter().fold(self.desk, desk::evolve);
+        if decision
+            .commands
+            .iter()
+            .any(|command: &DeskCommand| matches!(command, DeskCommand::SetPointer(_)))
+        {
+            eprintln!(
+                "pointer: {input:?} in {before:?} -> {:?}",
+                self.desk.pointer
+            );
+        }
         for command in decision.commands {
             self.execute(command).await;
         }
