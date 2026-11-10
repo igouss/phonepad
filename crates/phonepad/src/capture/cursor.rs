@@ -1,6 +1,8 @@
 use std::time::{Duration, Instant};
 
-use phonepad_core::geometry::Point;
+use phonepad_core::geometry::{Monitor, Point, monitor_under};
+
+use super::Pointer;
 
 use crate::hypr;
 use crate::marks::{Applied, Marks};
@@ -28,6 +30,16 @@ fn until_due(sampled_at: Option<Instant>, moved_at: Instant, now: Instant) -> Du
 pub(super) struct Sample {
     pub(super) at: Point,
     pub(super) applied: Applied,
+}
+
+impl Sample {
+    pub(super) fn pointer(&self, monitors: &[Monitor]) -> Option<Pointer> {
+        Some(Pointer {
+            at: self.at,
+            applied: self.applied.clone(),
+            monitor: monitor_under(self.at, monitors)?.clone(),
+        })
+    }
 }
 
 pub(super) struct Sampler {
@@ -156,6 +168,31 @@ mod tests {
 
     fn after(phone: u64, seq: u32) -> Applied {
         std::iter::once((PhoneId(phone), seq)).collect()
+    }
+
+    fn screen(name: &str, x: i32) -> Monitor {
+        Monitor::from_mode(name.to_owned(), Point { x, y: 0 }, 100, 100, 1.0, 0).unwrap()
+    }
+
+    #[test]
+    fn a_sample_with_no_monitor_is_no_pointer() {
+        assert_eq!(still(HERE).pointer(&[]), None);
+    }
+
+    #[test]
+    fn a_sample_becomes_a_pointer_on_the_monitor_under_it() {
+        let sample: Sample = Sample {
+            at: Point { x: 150, y: 20 },
+            applied: after(1, 3),
+        };
+        assert_eq!(
+            sample.pointer(&[screen("A", 0), screen("B", 100)]),
+            Some(Pointer {
+                at: Point { x: 150, y: 20 },
+                applied: after(1, 3),
+                monitor: screen("B", 100)
+            })
+        );
     }
 
     #[test]

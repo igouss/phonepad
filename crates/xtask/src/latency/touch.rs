@@ -117,6 +117,11 @@ fn circle(
     Ok(())
 }
 
+pub fn window(index: u32, settle: Duration, measured: Duration) -> (Duration, Duration) {
+    let settled: Duration = (settle + measured) * index + settle;
+    (settled, settled + measured)
+}
+
 fn drive(
     browser: &mut Browser,
     phases: usize,
@@ -129,11 +134,11 @@ fn drive(
     let mut step: u32 = 0;
     (0..u32::try_from(phases).map_err(|e| e.to_string())?)
         .map(|index: u32| {
-            let settled: Instant = start + (settle + measured) * index + settle;
+            let (settled, ended): (Duration, Duration) = window(index, settle, measured);
             browser.touch("touchStart", Some(finger(centre, step)))?;
-            circle(browser, centre, &mut step, settled)?;
+            circle(browser, centre, &mut step, start + settled)?;
             take(browser)?;
-            circle(browser, centre, &mut step, settled + measured)?;
+            circle(browser, centre, &mut step, start + ended)?;
             let taken: Taken = take(browser)?;
             browser.touch("touchEnd", None)?;
             Ok(phase(&taken))
@@ -200,6 +205,22 @@ pub fn checks(profile: &str, phase: &Phase) -> [Check; 2] {
             ),
         },
     ]
+}
+
+pub fn verdicts(profiles: &[&str], phases: &[Phase]) -> Vec<Check> {
+    let counted: Check = Check {
+        gate: String::from("touch phases"),
+        ok: profiles.len() == phases.len(),
+        detail: format!("{} of {} profiles measured", phases.len(), profiles.len()),
+    };
+    std::iter::once(counted)
+        .chain(
+            profiles
+                .iter()
+                .zip(phases)
+                .flat_map(|(profile, phase): (&&str, &Phase)| checks(profile, phase)),
+        )
+        .collect()
 }
 
 #[cfg(test)]

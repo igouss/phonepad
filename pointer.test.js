@@ -119,3 +119,7 @@ test("a view before the window's start shows the part that overlaps", () => {
 test("a view that only touches the window's edge shows nothing", () => {
   assert.equal(Pointer.shown({ x: 1000, y: 0, w: 200, h: 100 }, { x: 0, y: 0, w: 1000, h: 800 }), null);
 });
+
+test("a view that only touches the window's bottom edge shows nothing", () => {
+  assert.equal(Pointer.shown({ x: 0, y: 800, w: 200, h: 100 }, { x: 0, y: 0, w: 1000, h: 800 }), null);
+});

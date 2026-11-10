@@ -288,12 +288,9 @@ fn streamed(
     browser.into_iter().for_each(Browser::close);
     mover.map(Mover::stop).transpose()?;
     if let Some(driver) = driver {
-        phases
-            .iter()
-            .zip(driver.finish()?)
-            .flat_map(|(profile, phase): (&Profile, touch::Phase)| {
-                touch::checks(&profile.name, &phase)
-            })
+        let names: Vec<&str> = phases.iter().map(|p: &Profile| p.name.as_str()).collect();
+        touch::verdicts(&names, &driver.finish()?)
+            .into_iter()
             .for_each(|check: Check| report.record(check));
     }
     summaries

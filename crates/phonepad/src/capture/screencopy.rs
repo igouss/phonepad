@@ -6,7 +6,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
-use phonepad_core::geometry::{Monitor, Point, Size, monitor_under};
+use phonepad_core::geometry::{Monitor, Point, Size};
 use phonepad_h264::{Cropped, Dmabuf};
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::io::Errno;
@@ -183,14 +183,6 @@ fn wait(queue: &mut EventQueue<State>, state: &mut State, timeout: Duration) -> 
     Ok(())
 }
 
-fn pointer(sample: &Sample, monitors: &[Monitor]) -> Option<Pointer> {
-    Some(Pointer {
-        at: sample.at,
-        applied: sample.applied.clone(),
-        monitor: monitor_under(sample.at, monitors)?.clone(),
-    })
-}
-
 impl State {
     fn refresh_monitors(&mut self) -> anyhow::Result<()> {
         if self
@@ -214,7 +206,7 @@ impl State {
             self.cursor.send_replace(
                 self.sampler
                     .at()
-                    .and_then(|sample: &Sample| pointer(sample, &self.monitors)),
+                    .and_then(|sample: &Sample| sample.pointer(&self.monitors)),
             );
         }
         monitors?;
