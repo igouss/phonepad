@@ -54,10 +54,24 @@ fn view_size_is_published() {
 }
 
 #[test]
-fn ack_credits_the_stream() {
+fn an_ack_times_its_unit_then_credits_the_stream() {
     assert_eq!(
-        effects(PhoneMessage::Ack, 0),
-        vec![Effect::Stream(StreamInput::Ack)]
+        effects(PhoneMessage::Ack(9), 0),
+        vec![Effect::Acked(9), Effect::Stream(StreamInput::Ack)]
+    );
+}
+
+#[test]
+fn a_drawn_report_is_timed() {
+    let drawn: Drawn = Drawn {
+        id: 9,
+        received_ms: 1.0,
+        decoded_ms: 2.0,
+        drawn_ms: 3.0,
+    };
+    assert_eq!(
+        effects(PhoneMessage::Drawn(drawn), 0),
+        vec![Effect::Drawn(drawn)]
     );
 }
 
@@ -73,6 +87,8 @@ fn keyframe_request_counts_as_a_missed_unit() {
 fn a_received_unit_is_offered_with_its_kind() {
     let unit: Unit = Unit {
         kind: UnitKind::Keyframe,
+        id: 0,
+        captured_ns: 0,
         message: Bytes::from_static(b"au"),
     };
     assert_eq!(
@@ -124,6 +140,7 @@ async fn wired() -> Wired {
         view,
         cursor: watch::Sender::new(None),
         clock: Clock::start(),
+        timings: false,
     };
     let listener: tokio::net::TcpListener =
         tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -225,6 +242,8 @@ async fn a_keyframe_reaches_a_visible_phone() {
         .units
         .send(Unit {
             kind: UnitKind::Keyframe,
+            id: 0,
+            captured_ns: 0,
             message: Bytes::from_static(b"keyframe"),
         })
         .unwrap();

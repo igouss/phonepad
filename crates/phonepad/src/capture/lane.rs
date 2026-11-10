@@ -25,6 +25,7 @@ pub(super) struct Job {
     pub(super) transform: Transform,
     pub(super) keyframe: bool,
     pub(super) shot: Shot,
+    pub(super) captured_ns: u64,
 }
 
 pub(super) struct Lane {
@@ -102,6 +103,7 @@ fn encode_all(
     outstanding: &AtomicUsize,
     done: &OwnedFd,
 ) -> anyhow::Result<()> {
+    let mut next_id: u32 = 0;
     while let Ok(job) = queue.recv() {
         let unit: AccessUnit = h264.encode(job.cropped, job.keyframe).context("encode")?;
         outstanding.fetch_sub(1, Ordering::AcqRel);
@@ -111,13 +113,21 @@ fn encode_all(
         } else {
             UnitKind::Delta
         };
+        let id: u32 = next_id;
+        next_id = next_id.wrapping_add(1);
         let message: Bytes = Bytes::from(wire::frame_message(
+            id,
             job.shot.window,
             job.transform,
             &unit.data,
         ));
         let _no_viewer_subscribed: Result<usize, broadcast::error::SendError<Unit>> =
-            units.send(Unit { kind, message });
+            units.send(Unit {
+                kind,
+                id,
+                captured_ns: job.captured_ns,
+                message,
+            });
     }
     Ok(())
 }

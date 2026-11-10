@@ -8,6 +8,7 @@ mod input;
 mod keymap;
 mod owe;
 mod session;
+mod timing;
 mod tool;
 mod wire;
 
@@ -35,6 +36,7 @@ const BIG_POINTER: u32 = 64;
 const DEFAULT_POINTER: u32 = 24;
 const DEFAULT_RENDER_NODE: &str = "/dev/dri/renderD128";
 const UNIT_BACKLOG: usize = 8;
+const TIMINGS: &str = "PHONEPAD_TIMINGS";
 const SHUTDOWN_BOUND: Duration = Duration::from_secs(3);
 
 fn main() -> anyhow::Result<()> {
@@ -90,6 +92,7 @@ async fn serve() -> anyhow::Result<()> {
         view,
         cursor,
         clock,
+        timings: env::var_os(TIMINGS).is_some(),
     };
 
     let listener: TcpListener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))

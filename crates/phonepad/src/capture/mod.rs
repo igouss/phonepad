@@ -18,6 +18,8 @@ use self::screencopy::run;
 #[derive(Clone, Debug)]
 pub struct Unit {
     pub kind: UnitKind,
+    pub id: u32,
+    pub captured_ns: u64,
     pub message: Bytes,
 }
 

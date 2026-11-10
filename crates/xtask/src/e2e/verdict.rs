@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 pub const HEADER: usize = 9;
-pub const FRAME_HEADER: usize = 10;
+pub const FRAME_HEADER: usize = 14;
 pub const FRAME_TAG: u8 = 0;
 pub const CURSOR_TAG: u8 = 1;
 

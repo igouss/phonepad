@@ -71,7 +71,7 @@ function sendView() {
 }
 let decoder = null, spsId = null, needKey = true, stamp = 0;
 const heads = [];
-const ack = () => send({ t: "ack" });
+const ack = id => send({ t: "ack", id });
 const hex = n => n.toString(16).padStart(2, "0");
 function nals(b) {
   const out = [];
@@ -86,7 +86,7 @@ function nals(b) {
 }
 const shot = document.createElement("canvas");
 const shotCtx = shot.getContext("2d");
-let win = null, cur = null, painting = false;
+let win = null, cur = null, painting = false, fresh = null;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(v, hi));
 const ORIENT = [
   (w, h) => [1, 0, 0, 1, 0, 0], (w, h) => [0, 1, -1, 0, h, 0], (w, h) => [-1, 0, 0, -1, w, h], (w, h) => [0, -1, 1, 0, 0, w],
@@ -108,12 +108,13 @@ function paint() {
   ctx.beginPath(); ctx.arc(px, py, rad, 0, 2 * Math.PI); ctx.stroke();
   ctx.lineWidth = 2.5 * devicePixelRatio; ctx.strokeStyle = "#3d6";
   ctx.beginPath(); ctx.arc(px, py, rad, 0, 2 * Math.PI); ctx.stroke();
+  if (fresh) { send({ t: "drawn", id: fresh.id, rx: fresh.rx, dec: fresh.dec, at: performance.now() }); fresh = null; }
 }
 function repaint() { if (!painting) { painting = true; requestAnimationFrame(paint); } }
 function output(frame) {
   try {
     let head = null;
-    while (heads.length && heads[0].ts <= frame.timestamp) { head = heads.shift(); ack(); }
+    while (heads.length && heads[0].ts <= frame.timestamp) { head = heads.shift(); ack(head.id); }
     if (head) {
       const bw = frame.displayWidth, bh = frame.displayHeight, turned = head.t % 2 === 1;
       const w = turned ? bh : bw, h = turned ? bw : bh;
@@ -122,6 +123,7 @@ function output(frame) {
       shotCtx.drawImage(frame, 0, 0);
       shotCtx.setTransform(1, 0, 0, 1, 0, 0);
       win = { x: head.wx, y: head.wy, w, h };
+      fresh = { id: head.id, rx: head.rx, dec: performance.now() };
       repaint();
     }
   } finally {
@@ -129,37 +131,38 @@ function output(frame) {
   }
 }
 function restart() {
-  heads.length = 0; spsId = null; needKey = true;
+  heads.length = 0; spsId = null; needKey = true; fresh = null;
   if (decoder && decoder.state !== "closed") decoder.reset(); else decoder = null;
 }
 function fail() {
-  while (heads.length) { heads.shift(); ack(); }
+  while (heads.length) ack(heads.shift().id);
   restart();
   send({ t: "key" });
 }
 function configure(sps, id) {
-  while (heads.length) { heads.shift(); ack(); }
+  while (heads.length) ack(heads.shift().id);
   if (!decoder || decoder.state === "closed") decoder = new VideoDecoder({ output, error: fail });
   else decoder.reset();
   decoder.configure({ codec: "avc1." + hex(sps[1]) + hex(sps[2]) + hex(sps[3]), optimizeForLatency: true, hardwareAcceleration: "prefer-hardware" });
   spsId = id; needKey = true;
 }
 function onMessage(buf) {
-  const h = new DataView(buf, 0, Math.min(buf.byteLength, 10));
+  const rx = performance.now();
+  const h = new DataView(buf, 0, Math.min(buf.byteLength, 14));
   if (h.getUint8(0) === 1) { cur = { x: h.getInt32(1), y: h.getInt32(5) }; repaint(); return; }
-  const head = { wx: h.getInt32(1), wy: h.getInt32(5), t: h.getUint8(9) & 7, ts: stamp };
-  const au = new Uint8Array(buf, 10);
+  const head = { id: h.getUint32(1), wx: h.getInt32(5), wy: h.getInt32(9), t: h.getUint8(13) & 7, ts: stamp, rx };
+  const au = new Uint8Array(buf, 14);
   const units = nals(au);
   const key = units.some(n => (n[0] & 31) === 5);
   const sps = units.find(n => (n[0] & 31) === 7);
   try {
     if (key && sps && sps.length > 3) { const id = Array.from(sps, hex).join(""); if (id !== spsId) configure(sps, id); }
-    if (!units.length || !decoder || decoder.state !== "configured" || (needKey && !key)) { ack(); return; }
+    if (!units.length || !decoder || decoder.state !== "configured" || (needKey && !key)) { ack(head.id); return; }
     needKey = false;
     heads.push(head);
     decoder.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: stamp++, data: au }));
   } catch (_) {
-    if (!heads.includes(head)) ack();
+    if (!heads.includes(head)) ack(head.id);
     fail();
   }
 }

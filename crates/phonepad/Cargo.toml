@@ -10,7 +10,7 @@ axum = { version = "0.8.9", features = ["ws"] }
 evdev = "0.13.2"
 phonepad-core = { path = "../phonepad-core" }
 phonepad-h264 = { path = "../phonepad-h264" }
-rustix = { version = "1.1.6", features = ["event"] }
+rustix = { version = "1.1.6", features = ["event", "time"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 thiserror = "2.0.17"

@@ -386,7 +386,7 @@ impl State {
         let Some(pool) = self.pool.as_mut() else {
             return Ok(WAKE);
         };
-        let Some((held, _)) = plan::held(&pool.slots) else {
+        let Some((held, captured_ns)) = plan::held(&pool.slots) else {
             return Ok(WAKE);
         };
         let pending: Pending = Pending {
@@ -418,6 +418,7 @@ impl State {
                     transform: pool.shape.transform,
                     keyframe: pending.keyframe && self.keyframe.take(),
                     shot: wanted,
+                    captured_ns,
                 })?;
                 pool.new_frame = false;
                 pool.shown = Some(wanted);

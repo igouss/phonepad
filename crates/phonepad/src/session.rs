@@ -10,9 +10,10 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::capture::{KeyframeRequest, Unit};
-use crate::clock::Clock;
+use crate::clock::{self, Clock};
 use crate::desk::DeskMessage;
 use crate::input;
+use crate::timing::{Drawn, Ledger, Record, Sent};
 use crate::wire::{self, PhoneMessage};
 
 #[derive(Clone)]
@@ -24,6 +25,7 @@ pub struct SessionPorts {
     pub view: watch::Sender<Option<Size>>,
     pub cursor: watch::Sender<Option<Point>>,
     pub clock: Clock,
+    pub timings: bool,
 }
 
 struct Session {
@@ -31,6 +33,7 @@ struct Session {
     stream: Stream,
     units: Option<broadcast::Receiver<Unit>>,
     cursor: Option<watch::Receiver<Option<Point>>>,
+    ledger: Ledger,
     ports: SessionPorts,
 }
 
@@ -40,6 +43,7 @@ pub async fn run(socket: WebSocket, ports: SessionPorts) {
         stream: Stream::Hidden,
         units: None,
         cursor: None,
+        ledger: Ledger::default(),
         ports,
     };
     if let Err(err) = session.serve().await {
@@ -72,12 +76,14 @@ async fn next_cursor(cursor: &mut Option<watch::Receiver<Option<Point>>>) -> Opt
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Effect {
     TellDesk(DeskInput),
     Inject(InputCommand),
     Stream(StreamInput),
     SetView(Option<Size>),
+    Acked(u32),
+    Drawn(Drawn),
 }
 
 fn effects(message: PhoneMessage, at_ms: u64) -> Vec<Effect> {
@@ -88,7 +94,8 @@ fn effects(message: PhoneMessage, at_ms: u64) -> Vec<Effect> {
         ],
         PhoneMessage::Visible(visible) => vec![Effect::Stream(StreamInput::Visibility(visible))],
         PhoneMessage::View(size) => vec![Effect::SetView(size)],
-        PhoneMessage::Ack => vec![Effect::Stream(StreamInput::Ack)],
+        PhoneMessage::Ack(id) => vec![Effect::Acked(id), Effect::Stream(StreamInput::Ack)],
+        PhoneMessage::Drawn(drawn) => vec![Effect::Drawn(drawn)],
         PhoneMessage::Key => vec![Effect::Stream(StreamInput::Missed)],
     }
 }
@@ -112,7 +119,7 @@ impl Session {
                     Some(Err(err)) => return Err(err.into()),
                 },
                 received = next_unit(&mut self.units) => match unit_input(&received) {
-                    Some(input) => self.step(input, received.ok().map(|unit: Unit| unit.message)).await?,
+                    Some(input) => self.step(input, received.as_ref().ok()).await?,
                     None => return Err(anyhow!("capture feed closed")),
                 },
                 Some(at) = next_cursor(&mut self.cursor) => self.send_cursor(at).await?,
@@ -149,26 +156,31 @@ impl Session {
                 self.ports.view.send_replace(size);
                 Ok(())
             }
+            Effect::Acked(id) => {
+                let record: Option<Record> = self.ledger.acked(id, clock::monotonic_ns());
+                record.map_or(Ok(()), |record: Record| self.print(&record))
+            }
+            Effect::Drawn(drawn) => {
+                let record: Record = self.ledger.drawn(drawn);
+                self.print(&record)
+            }
         }
     }
 
-    async fn step(&mut self, input: StreamInput, message: Option<Bytes>) -> anyhow::Result<()> {
+    async fn step(&mut self, input: StreamInput, unit: Option<&Unit>) -> anyhow::Result<()> {
         let decision: Decision<StreamEvent, StreamCommand> = stream::decide(&self.stream, input);
         self.stream = decision.events.iter().fold(self.stream, stream::evolve);
         for command in decision.commands {
-            self.execute(command, message.as_ref()).await?;
+            self.execute(command, unit).await?;
         }
         Ok(())
     }
 
-    async fn execute(
-        &mut self,
-        command: StreamCommand,
-        message: Option<&Bytes>,
-    ) -> anyhow::Result<()> {
+    async fn execute(&mut self, command: StreamCommand, unit: Option<&Unit>) -> anyhow::Result<()> {
         match command {
             StreamCommand::JoinViewers => {
                 self.units = Some(self.ports.units.subscribe());
+                self.ledger = Ledger::default();
                 let mut cursor: watch::Receiver<Option<Point>> = self.ports.cursor.subscribe();
                 let current: Option<Point> = *cursor.borrow_and_update();
                 self.cursor = Some(cursor);
@@ -187,10 +199,18 @@ impl Session {
                 Ok(())
             }
             StreamCommand::SendUnit => {
-                let message: Bytes = message
-                    .cloned()
-                    .ok_or_else(|| anyhow!("the stream sent a unit it was not offered"))?;
-                self.socket.send(Message::Binary(message)).await?;
+                let unit: &Unit =
+                    unit.ok_or_else(|| anyhow!("the stream sent a unit it was not offered"))?;
+                self.ledger.sent(Sent {
+                    id: unit.id,
+                    kind: unit.kind,
+                    bytes: unit.message.len(),
+                    captured_ns: unit.captured_ns,
+                    sent_ns: clock::monotonic_ns(),
+                });
+                self.socket
+                    .send(Message::Binary(unit.message.clone()))
+                    .await?;
                 Ok(())
             }
         }
@@ -200,6 +220,13 @@ impl Session {
         self.socket
             .send(Message::Binary(Bytes::from(wire::cursor_message(at))))
             .await?;
+        Ok(())
+    }
+
+    fn print(&self, record: &Record) -> anyhow::Result<()> {
+        if self.ports.timings {
+            println!("timing {}", serde_json::to_string(record)?);
+        }
         Ok(())
     }
 

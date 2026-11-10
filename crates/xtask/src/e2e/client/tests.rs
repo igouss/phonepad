@@ -1,4 +1,4 @@
-use super::{Handshake, LOGIN_HEADER, Received, handshake, request, timed_out, watch};
+use super::{Handshake, LOGIN_HEADER, Received, ack, handshake, request, timed_out, watch};
 use std::io::{Error, ErrorKind};
 use std::net::{TcpListener, TcpStream};
 use std::thread::{self, JoinHandle};
@@ -61,12 +61,42 @@ fn upgraded(port: u16) -> Box<WebSocket<TcpStream>> {
     }
 }
 
+const CURSOR: [u8; 9] = [1, 0, 0, 0, 5, 0, 0, 0, 6];
+
+fn frame(id: u8) -> Vec<u8> {
+    vec![0, 0, 0, 0, id, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0x65]
+}
+
+#[test]
+fn a_frame_is_acked_by_its_id() {
+    assert_eq!(
+        ack(&[0, 1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+        Some(String::from(r#"{"t":"ack","id":16909060}"#))
+    );
+}
+
+#[test]
+fn a_cursor_message_is_not_acked() {
+    assert_eq!(ack(&CURSOR), None);
+}
+
+#[test]
+fn a_frame_shorter_than_its_header_is_not_acked() {
+    assert_eq!(ack(&[0, 1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0]), None);
+}
+
+#[test]
+fn an_empty_message_is_not_acked() {
+    assert_eq!(ack(&[]), None);
+}
+
 fn phone_session(stream: TcpStream) -> Vec<String> {
     let mut socket: WebSocket<TcpStream> = accept(stream);
     let opening: [String; 2] = [text(&mut socket), text(&mut socket)];
-    socket.send(Message::binary(vec![1u8, 2])).unwrap();
+    socket.send(Message::binary(frame(7))).unwrap();
     socket.send(Message::text("hello")).unwrap();
-    socket.send(Message::binary(vec![3u8])).unwrap();
+    socket.send(Message::binary(CURSOR.to_vec())).unwrap();
+    socket.send(Message::binary(frame(8))).unwrap();
     let acks: [String; 2] = [text(&mut socket), text(&mut socket)];
     let closing: Message = socket.read().unwrap();
     opening
@@ -77,19 +107,19 @@ fn phone_session(stream: TcpStream) -> Vec<String> {
 }
 
 #[test]
-fn a_viewer_opens_with_view_and_visible_and_acks_each_binary_message() {
+fn a_viewer_opens_with_view_and_visible_and_acks_each_frame_by_its_id() {
     let (port, phone): (u16, JoinHandle<Vec<String>>) = server(phone_session);
     let received: Received = watch(upgraded(port), (648, 1072), WATCHED).unwrap();
     assert_eq!(
         (received.binary, received.texts, phone.join().unwrap()),
         (
-            vec![vec![1u8, 2], vec![3u8]],
+            vec![frame(7), CURSOR.to_vec(), frame(8)],
             1,
             vec![
                 String::from(r#"{"t":"view","w":648,"h":1072}"#),
                 String::from(r#"{"t":"visible","v":true}"#),
-                String::from(r#"{"t":"ack"}"#),
-                String::from(r#"{"t":"ack"}"#),
+                String::from(r#"{"t":"ack","id":7}"#),
+                String::from(r#"{"t":"ack","id":8}"#),
                 String::from("close: true"),
             ]
         )

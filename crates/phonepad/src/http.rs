@@ -118,6 +118,7 @@ mod tests {
             view,
             cursor: watch::Sender::new(None),
             clock: Clock::start(),
+            timings: false,
         };
         let request: Request = login
             .into_iter()

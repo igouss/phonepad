@@ -6,6 +6,8 @@ use phonepad_core::geometry::{Point, Size, Transform};
 use phonepad_core::input::{Button, InputCommand};
 use serde::Deserialize;
 
+use crate::timing::Drawn;
+
 #[derive(Deserialize)]
 #[serde(tag = "t", rename_all = "lowercase")]
 enum WireMessage {
@@ -16,7 +18,8 @@ enum WireMessage {
     Text { s: String },
     Visible { v: bool },
     View { w: u32, h: u32 },
-    Ack,
+    Ack { id: u32 },
+    Drawn { id: u32, rx: f64, dec: f64, at: f64 },
     Key,
 }
 
@@ -28,12 +31,13 @@ enum WireButton {
     Right,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PhoneMessage {
     Input(InputCommand),
     Visible(bool),
     View(Option<Size>),
-    Ack,
+    Ack(u32),
+    Drawn(Drawn),
     Key,
 }
 
@@ -64,7 +68,13 @@ pub fn parse(text: &str) -> Result<PhoneMessage, WireError> {
         WireMessage::Text { s } => PhoneMessage::Input(InputCommand::Text(s)),
         WireMessage::Visible { v } => PhoneMessage::Visible(v),
         WireMessage::View { w, h } => PhoneMessage::View(size(w, h)),
-        WireMessage::Ack => PhoneMessage::Ack,
+        WireMessage::Ack { id } => PhoneMessage::Ack(id),
+        WireMessage::Drawn { id, rx, dec, at } => PhoneMessage::Drawn(Drawn {
+            id,
+            received_ms: rx,
+            decoded_ms: dec,
+            drawn_ms: at,
+        }),
         WireMessage::Key => PhoneMessage::Key,
     })
 }
@@ -79,22 +89,23 @@ pub fn key_code(name: &str) -> Result<u16, WireError> {
 const FRAME_TAG: u8 = 0;
 const CURSOR_TAG: u8 = 1;
 
-fn tagged(tag: u8, at: Point, rest: &[u8]) -> Vec<u8> {
-    std::iter::once(tag)
-        .chain(at.x.to_be_bytes())
-        .chain(at.y.to_be_bytes())
-        .chain(rest.iter().copied())
+fn position(at: Point) -> impl Iterator<Item = u8> {
+    at.x.to_be_bytes().into_iter().chain(at.y.to_be_bytes())
+}
+
+pub fn frame_message(id: u32, window: Point, transform: Transform, unit: &[u8]) -> Vec<u8> {
+    std::iter::once(FRAME_TAG)
+        .chain(id.to_be_bytes())
+        .chain(position(window))
+        .chain(std::iter::once(transform.wayland()))
+        .chain(unit.iter().copied())
         .collect()
 }
 
-pub fn frame_message(window: Point, transform: Transform, unit: &[u8]) -> Vec<u8> {
-    let mut message: Vec<u8> = tagged(FRAME_TAG, window, &[transform.wayland()]);
-    message.extend_from_slice(unit);
-    message
-}
-
 pub fn cursor_message(cursor: Point) -> Vec<u8> {
-    tagged(CURSOR_TAG, cursor, &[])
+    std::iter::once(CURSOR_TAG)
+        .chain(position(cursor))
+        .collect()
 }
 
 fn button(wire: WireButton) -> Button {
@@ -270,8 +281,40 @@ mod tests {
     }
 
     #[test]
-    fn ack() {
-        assert_eq!(parse(r#"{"t":"ack"}"#).unwrap(), PhoneMessage::Ack);
+    fn an_ack_names_its_unit() {
+        assert_eq!(
+            parse(r#"{"t":"ack","id":4294967295}"#).unwrap(),
+            PhoneMessage::Ack(u32::MAX)
+        );
+    }
+
+    #[test]
+    fn an_ack_without_its_unit_is_malformed() {
+        assert!(matches!(
+            parse(r#"{"t":"ack"}"#),
+            Err(WireError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn a_drawn_report_carries_the_page_times() {
+        assert_eq!(
+            parse(r#"{"t":"drawn","id":7,"rx":10.5,"dec":12,"at":20.25}"#).unwrap(),
+            PhoneMessage::Drawn(Drawn {
+                id: 7,
+                received_ms: 10.5,
+                decoded_ms: 12.0,
+                drawn_ms: 20.25
+            })
+        );
+    }
+
+    #[test]
+    fn a_drawn_report_without_its_draw_time_is_malformed() {
+        assert!(matches!(
+            parse(r#"{"t":"drawn","id":7,"rx":10.5,"dec":12}"#),
+            Err(WireError::Malformed(_))
+        ));
     }
 
     #[test]
@@ -317,14 +360,18 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_is_tag_zero_the_window_origin_and_the_transform_before_the_access_unit() {
+    fn a_frame_is_tag_zero_the_unit_id_the_window_origin_and_the_transform_before_the_access_unit()
+    {
         assert_eq!(
             frame_message(
+                0x0102_0304,
                 Point { x: 1, y: -2 },
                 Transform::Flipped90,
                 &[0, 0, 1, 0x65]
             ),
-            vec![0, 0, 0, 0, 1, 0xFF, 0xFF, 0xFF, 0xFE, 5, 0, 0, 1, 0x65]
+            vec![
+                0, 1, 2, 3, 4, 0, 0, 0, 1, 0xFF, 0xFF, 0xFF, 0xFE, 5, 0, 0, 1, 0x65
+            ]
         );
     }
 

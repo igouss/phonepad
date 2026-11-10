@@ -6,10 +6,11 @@ use tungstenite::handshake::client::Request;
 use tungstenite::http::HeaderValue;
 use tungstenite::{HandshakeError, Message, WebSocket};
 
+use super::verdict::{FRAME_HEADER, FRAME_TAG};
+
 const LOGIN_HEADER: &str = "Tailscale-User-Login";
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL: Duration = Duration::from_millis(100);
-const ACK: &str = r#"{"t":"ack"}"#;
 const VISIBLE: &str = r#"{"t":"visible","v":true}"#;
 
 pub enum Handshake {
@@ -59,6 +60,16 @@ fn send(socket: &mut WebSocket<TcpStream>, text: &str) -> Result<(), String> {
         .map_err(|e| format!("send {text}: {e}"))
 }
 
+fn ack(payload: &[u8]) -> Option<String> {
+    match (payload.first(), payload.get(1..5)) {
+        (Some(&FRAME_TAG), Some(id)) if payload.len() >= FRAME_HEADER => {
+            let id: [u8; 4] = id.try_into().ok()?;
+            Some(format!(r#"{{"t":"ack","id":{}}}"#, u32::from_be_bytes(id)))
+        }
+        (None | Some(_), None | Some(_)) => None,
+    }
+}
+
 fn timed_out(error: &tungstenite::Error) -> bool {
     matches!(error, tungstenite::Error::Io(io) if matches!(io.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut))
 }
@@ -82,8 +93,10 @@ pub fn watch(
     while start.elapsed() < watched {
         match socket.read() {
             Ok(Message::Binary(payload)) => {
+                if let Some(ack) = ack(&payload) {
+                    send(&mut socket, &ack)?;
+                }
                 received.binary.push(payload.to_vec());
-                send(&mut socket, ACK)?;
             }
             Ok(Message::Text(_)) => received.texts += 1,
             Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_)) => {}
