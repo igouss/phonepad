@@ -84,17 +84,35 @@ fn live_instances(hypr: &Path) -> Result<Vec<String>, String> {
         .collect())
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Compositor {
+    pub display: String,
+    pub signature: String,
+}
+
+fn runtime_parent() -> Result<PathBuf, String> {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .ok_or_else(|| String::from("XDG_RUNTIME_DIR is not set"))
+}
+
+impl Compositor {
+    pub fn live() -> Result<Compositor, String> {
+        Ok(Compositor {
+            display: std::env::var("WAYLAND_DISPLAY")
+                .map_err(|e| format!("WAYLAND_DISPLAY: {e}"))?,
+            signature: instance(
+                std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok().as_deref(),
+                &live_instances(&runtime_parent()?.join("hypr"))?,
+            )?,
+        })
+    }
+}
+
 impl Runtime {
-    pub fn create(name: &str) -> Result<Runtime, String> {
-        let parent: PathBuf = std::env::var_os("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .ok_or("XDG_RUNTIME_DIR is not set")?;
-        let display: String =
-            std::env::var("WAYLAND_DISPLAY").map_err(|e| format!("WAYLAND_DISPLAY: {e}"))?;
-        let signature: String = instance(
-            std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok().as_deref(),
-            &live_instances(&parent.join("hypr"))?,
-        )?;
+    pub fn create(name: &str, compositor: &Compositor) -> Result<Runtime, String> {
+        let parent: PathBuf = runtime_parent()?;
+        let Compositor { display, signature }: Compositor = compositor.clone();
         let dir: PathBuf = parent.join(name);
         if std::fs::symlink_metadata(&dir).is_ok() {
             std::fs::remove_dir_all(&dir).map_err(|e| format!("stale {}: {e}", dir.display()))?;

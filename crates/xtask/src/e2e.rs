@@ -1,7 +1,7 @@
 mod verdict;
 
 use crate::report::{Check, Report};
-use crate::testbed::{self, Instance, Runtime, SHUTDOWN_PATIENCE, Scratch, Shutdown};
+use crate::testbed::{self, Compositor, Instance, Runtime, SHUTDOWN_PATIENCE, Scratch, Shutdown};
 use crate::viewer::{self, Handshake, Received, Reports};
 use std::ffi::OsString;
 use std::net::{Ipv4Addr, TcpListener};
@@ -118,7 +118,7 @@ fn checks(report: &mut Report, bin: Option<PathBuf>) -> Result<(), String> {
             .map_err(|e| format!("port {PORT} is not free: {e}"))?,
     );
     let scratch: Scratch = Scratch::create("e2e")?;
-    let runtime: Runtime = Runtime::create(RUNTIME_NAME)?;
+    let runtime: Runtime = Runtime::create(RUNTIME_NAME, &Compositor::live()?)?;
     runtime
         .checks()
         .into_iter()

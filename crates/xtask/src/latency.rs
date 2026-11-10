@@ -6,7 +6,7 @@ mod stats;
 mod touch;
 
 use crate::report::{Check, Report};
-use crate::testbed::{self, Instance, Runtime, Scratch};
+use crate::testbed::{self, Compositor, Instance, Runtime, Scratch};
 use crate::viewer::{self, Handshake, Reports};
 use browser::{Browser, PHONE};
 use link::Profile;
@@ -334,7 +334,7 @@ fn bench(report: &mut Report, bin: Option<PathBuf>, plan: Plan) -> Result<(), St
         Run::Calibrate => calibration()?,
     };
     let scratch: Scratch = Scratch::create("latency")?;
-    let runtime: Runtime = Runtime::create(&runtime_name(port))?;
+    let runtime: Runtime = Runtime::create(&runtime_name(port), &Compositor::live()?)?;
     runtime
         .checks()
         .into_iter()
