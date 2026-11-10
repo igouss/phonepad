@@ -187,84 +187,44 @@
           "label": "Desk { viewers: 0, pointer: Normal }"
         },
         {
-          "id": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_None",
-          "label": "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1000, last_seen: None } }"
-        },
-        {
-          "id": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
-          "label": "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 0, y: 0 }) } }"
+          "id": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000",
+          "label": "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1000 } }"
         },
         {
           "id": "s_Desk_viewers_1_pointer_Normal",
           "label": "Desk { viewers: 1, pointer: Normal }"
         },
         {
-          "id": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None",
-          "label": "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1000, last_seen: None } }"
-        },
-        {
-          "id": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
-          "label": "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 0, y: 0 }) } }"
+          "id": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000",
+          "label": "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1000 } }"
         },
         {
           "id": "s_Desk_viewers_2_pointer_Normal",
           "label": "Desk { viewers: 2, pointer: Normal }"
         },
         {
-          "id": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None",
-          "label": "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1000, last_seen: None } }"
+          "id": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000",
+          "label": "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1000 } }"
         },
         {
-          "id": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
-          "label": "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 0, y: 0 }) } }"
+          "id": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100",
+          "label": "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1100 } }"
         },
         {
-          "id": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100_last_seen_None",
-          "label": "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1100, last_seen: None } }"
-        },
-        {
-          "id": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0",
-          "label": "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 5, y: 0 }) } }"
-        },
-        {
-          "id": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100_last_seen_Some_Point_x_0_y_0",
-          "label": "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1100, last_seen: Some(Point { x: 0, y: 0 }) } }"
-        },
-        {
-          "id": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100_last_seen_None",
-          "label": "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1100, last_seen: None } }"
-        },
-        {
-          "id": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0",
-          "label": "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 5, y: 0 }) } }"
-        },
-        {
-          "id": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100_last_seen_Some_Point_x_0_y_0",
-          "label": "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1100, last_seen: Some(Point { x: 0, y: 0 }) } }"
+          "id": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100",
+          "label": "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1100 } }"
         },
         {
           "id": "s_Desk_viewers_3_pointer_Normal",
           "label": "Desk { viewers: 3, pointer: Normal }"
         },
         {
-          "id": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100_last_seen_None",
-          "label": "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1100, last_seen: None } }"
+          "id": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100",
+          "label": "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1100 } }"
         },
         {
-          "id": "s_Desk_viewers_3_pointer_Big_last_phone_input_ms_1000_last_seen_None",
-          "label": "Desk { viewers: 3, pointer: Big { last_phone_input_ms: 1000, last_seen: None } }"
-        },
-        {
-          "id": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0",
-          "label": "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 5, y: 0 }) } }"
-        },
-        {
-          "id": "s_Desk_viewers_3_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
-          "label": "Desk { viewers: 3, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 0, y: 0 }) } }"
-        },
-        {
-          "id": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100_last_seen_Some_Point_x_0_y_0",
-          "label": "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1100, last_seen: Some(Point { x: 0, y: 0 }) } }"
+          "id": "s_Desk_viewers_3_pointer_Big_last_phone_input_ms_1000",
+          "label": "Desk { viewers: 3, pointer: Big { last_phone_input_ms: 1000 } }"
         }
       ],
       "transitions": [
@@ -278,72 +238,32 @@
         },
         {
           "commands": [
-            "SetPointer(Big)",
-            "StartLocalMouseWatch"
+            "SetPointer(Big)"
           ],
           "from": "s_Desk_viewers_0_pointer_Normal",
           "input": "PhoneInput { at_ms: 1100 }",
-          "to": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100_last_seen_None"
+          "to": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100"
         },
         {
           "commands": [
             "StartCapture"
           ],
-          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000",
           "input": "ViewerJoined",
-          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None"
+          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000"
         },
         {
           "commands": [],
-          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000",
           "input": "PhoneInput { at_ms: 1100 }",
-          "to": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100_last_seen_None"
-        },
-        {
-          "commands": [],
-          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_None",
-          "input": "CursorSampled { at: Point { x: 0, y: 0 }, at_ms: 1100 }",
-          "to": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0"
-        },
-        {
-          "commands": [],
-          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_None",
-          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1100 }",
-          "to": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0"
-        },
-        {
-          "commands": [],
-          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_None",
-          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1400 }",
-          "to": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0"
+          "to": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100"
         },
         {
           "commands": [
-            "StartCapture"
+            "SetPointer(Normal)"
           ],
-          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
-          "input": "ViewerJoined",
-          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0"
-        },
-        {
-          "commands": [],
-          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
-          "input": "PhoneInput { at_ms: 1100 }",
-          "to": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100_last_seen_Some_Point_x_0_y_0"
-        },
-        {
-          "commands": [],
-          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
-          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1100 }",
-          "to": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0"
-        },
-        {
-          "commands": [
-            "SetPointer(Normal)",
-            "StopLocalMouseWatch"
-          ],
-          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
-          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1400 }",
+          "from": "s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000",
+          "input": "InputActivity { at_ms: 1400 }",
           "to": "s_Desk_viewers_0_pointer_Normal"
         },
         {
@@ -362,88 +282,39 @@
         },
         {
           "commands": [
-            "SetPointer(Big)",
-            "StartLocalMouseWatch"
+            "SetPointer(Big)"
           ],
           "from": "s_Desk_viewers_1_pointer_Normal",
           "input": "PhoneInput { at_ms: 1100 }",
-          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100_last_seen_None"
+          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100"
         },
         {
           "commands": [],
-          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000",
           "input": "ViewerJoined",
-          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None"
+          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000"
         },
         {
           "commands": [
             "StopCapture",
-            "SetPointer(Normal)",
-            "StopLocalMouseWatch"
+            "SetPointer(Normal)"
           ],
-          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000",
           "input": "ViewerLeft",
           "to": "s_Desk_viewers_0_pointer_Normal"
         },
         {
           "commands": [],
-          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000",
           "input": "PhoneInput { at_ms: 1100 }",
-          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100_last_seen_None"
-        },
-        {
-          "commands": [],
-          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None",
-          "input": "CursorSampled { at: Point { x: 0, y: 0 }, at_ms: 1100 }",
-          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0"
-        },
-        {
-          "commands": [],
-          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None",
-          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1100 }",
-          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0"
-        },
-        {
-          "commands": [],
-          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None",
-          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1400 }",
-          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0"
-        },
-        {
-          "commands": [],
-          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
-          "input": "ViewerJoined",
-          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0"
+          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100"
         },
         {
           "commands": [
-            "StopCapture",
-            "SetPointer(Normal)",
-            "StopLocalMouseWatch"
+            "SetPointer(Normal)"
           ],
-          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
-          "input": "ViewerLeft",
-          "to": "s_Desk_viewers_0_pointer_Normal"
-        },
-        {
-          "commands": [],
-          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
-          "input": "PhoneInput { at_ms: 1100 }",
-          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100_last_seen_Some_Point_x_0_y_0"
-        },
-        {
-          "commands": [],
-          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
-          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1100 }",
-          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0"
-        },
-        {
-          "commands": [
-            "SetPointer(Normal)",
-            "StopLocalMouseWatch"
-          ],
-          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
-          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1400 }",
+          "from": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000",
+          "input": "InputActivity { at_ms: 1400 }",
           "to": "s_Desk_viewers_1_pointer_Normal"
         },
         {
@@ -460,80 +331,36 @@
         },
         {
           "commands": [
-            "SetPointer(Big)",
-            "StartLocalMouseWatch"
+            "SetPointer(Big)"
           ],
           "from": "s_Desk_viewers_2_pointer_Normal",
           "input": "PhoneInput { at_ms: 1100 }",
-          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100_last_seen_None"
+          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100"
         },
         {
           "commands": [],
-          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000",
           "input": "ViewerJoined",
-          "to": "s_Desk_viewers_3_pointer_Big_last_phone_input_ms_1000_last_seen_None"
+          "to": "s_Desk_viewers_3_pointer_Big_last_phone_input_ms_1000"
         },
         {
           "commands": [],
-          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000",
           "input": "ViewerLeft",
-          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None"
+          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000"
         },
         {
           "commands": [],
-          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None",
+          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000",
           "input": "PhoneInput { at_ms: 1100 }",
-          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100_last_seen_None"
-        },
-        {
-          "commands": [],
-          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None",
-          "input": "CursorSampled { at: Point { x: 0, y: 0 }, at_ms: 1100 }",
-          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0"
-        },
-        {
-          "commands": [],
-          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None",
-          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1100 }",
-          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0"
-        },
-        {
-          "commands": [],
-          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None",
-          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1400 }",
-          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0"
-        },
-        {
-          "commands": [],
-          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
-          "input": "ViewerJoined",
-          "to": "s_Desk_viewers_3_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0"
-        },
-        {
-          "commands": [],
-          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
-          "input": "ViewerLeft",
-          "to": "s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0"
-        },
-        {
-          "commands": [],
-          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
-          "input": "PhoneInput { at_ms: 1100 }",
-          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100_last_seen_Some_Point_x_0_y_0"
-        },
-        {
-          "commands": [],
-          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
-          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1100 }",
-          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0"
+          "to": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100"
         },
         {
           "commands": [
-            "SetPointer(Normal)",
-            "StopLocalMouseWatch"
+            "SetPointer(Normal)"
           ],
-          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0",
-          "input": "CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1400 }",
+          "from": "s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000",
+          "input": "InputActivity { at_ms: 1400 }",
           "to": "s_Desk_viewers_2_pointer_Normal"
         }
       ]

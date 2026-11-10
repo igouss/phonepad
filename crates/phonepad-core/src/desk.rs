@@ -1,5 +1,4 @@
 use crate::decision::Decision;
-use crate::geometry::Point;
 
 pub const PHONE_QUIET_MS: u64 = 300;
 
@@ -12,10 +11,7 @@ pub enum PointerSize {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pointer {
     Normal,
-    Big {
-        last_phone_input_ms: u64,
-        last_seen: Option<Point>,
-    },
+    Big { last_phone_input_ms: u64 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,7 +34,7 @@ pub enum DeskInput {
     ViewerJoined,
     ViewerLeft,
     PhoneInput { at_ms: u64 },
-    CursorSampled { at: Point, at_ms: u64 },
+    InputActivity { at_ms: u64 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,7 +43,6 @@ pub enum DeskEvent {
     ViewerLeft,
     PointerEnlarged { at_ms: u64 },
     PhoneActive { at_ms: u64 },
-    CursorSeen(Point),
     PointerRestored,
 }
 
@@ -56,8 +51,6 @@ pub enum DeskCommand {
     StartCapture,
     StopCapture,
     SetPointer(PointerSize),
-    StartLocalMouseWatch,
-    StopLocalMouseWatch,
 }
 
 pub fn decide(state: &Desk, input: DeskInput) -> Decision<DeskEvent, DeskCommand> {
@@ -65,7 +58,7 @@ pub fn decide(state: &Desk, input: DeskInput) -> Decision<DeskEvent, DeskCommand
         DeskInput::ViewerJoined => viewer_joined(state),
         DeskInput::ViewerLeft => viewer_left(state),
         DeskInput::PhoneInput { at_ms } => phone_input(state, at_ms),
-        DeskInput::CursorSampled { at, at_ms } => cursor_sampled(state, at, at_ms),
+        DeskInput::InputActivity { at_ms } => input_activity(state, at_ms),
     }
 }
 
@@ -93,7 +86,6 @@ fn viewer_left(state: &Desk) -> Decision<DeskEvent, DeskCommand> {
             commands: vec![
                 DeskCommand::StopCapture,
                 DeskCommand::SetPointer(PointerSize::Normal),
-                DeskCommand::StopLocalMouseWatch,
             ],
         },
         (2.., Pointer::Normal | Pointer::Big { .. }) => Decision {
@@ -107,10 +99,7 @@ fn phone_input(state: &Desk, at_ms: u64) -> Decision<DeskEvent, DeskCommand> {
     match state.pointer {
         Pointer::Normal => Decision {
             events: vec![DeskEvent::PointerEnlarged { at_ms }],
-            commands: vec![
-                DeskCommand::SetPointer(PointerSize::Big),
-                DeskCommand::StartLocalMouseWatch,
-            ],
+            commands: vec![DeskCommand::SetPointer(PointerSize::Big)],
         },
         Pointer::Big { .. } => Decision {
             events: vec![DeskEvent::PhoneActive { at_ms }],
@@ -119,82 +108,44 @@ fn phone_input(state: &Desk, at_ms: u64) -> Decision<DeskEvent, DeskCommand> {
     }
 }
 
-fn cursor_sampled(state: &Desk, at: Point, at_ms: u64) -> Decision<DeskEvent, DeskCommand> {
+fn input_activity(state: &Desk, at_ms: u64) -> Decision<DeskEvent, DeskCommand> {
     match state.pointer {
-        Pointer::Normal => Decision::none(),
         Pointer::Big {
             last_phone_input_ms,
-            last_seen: Some(seen),
-        } if seen != at && at_ms.saturating_sub(last_phone_input_ms) > PHONE_QUIET_MS => Decision {
+        } if at_ms.saturating_sub(last_phone_input_ms) > PHONE_QUIET_MS => Decision {
             events: vec![DeskEvent::PointerRestored],
-            commands: vec![
-                DeskCommand::SetPointer(PointerSize::Normal),
-                DeskCommand::StopLocalMouseWatch,
-            ],
+            commands: vec![DeskCommand::SetPointer(PointerSize::Normal)],
         },
-        Pointer::Big {
-            last_seen: Some(seen),
-            ..
-        } if seen == at => Decision::none(),
-        Pointer::Big {
-            last_seen: Some(_) | None,
-            ..
-        } => Decision {
-            events: vec![DeskEvent::CursorSeen(at)],
-            commands: Vec::new(),
-        },
+        Pointer::Normal | Pointer::Big { .. } => Decision::none(),
     }
 }
 
 pub fn evolve(state: Desk, event: &DeskEvent) -> Desk {
     let pointer: Pointer = match (state.pointer, *event) {
-        (Pointer::Normal | Pointer::Big { .. }, DeskEvent::PointerEnlarged { at_ms }) => {
-            Pointer::Big {
-                last_phone_input_ms: at_ms,
-                last_seen: None,
-            }
-        }
-        (Pointer::Big { last_seen, .. }, DeskEvent::PhoneActive { at_ms }) => Pointer::Big {
-            last_phone_input_ms: at_ms,
-            last_seen,
-        },
         (
-            Pointer::Big {
-                last_phone_input_ms,
-                ..
-            },
-            DeskEvent::CursorSeen(p),
+            Pointer::Normal | Pointer::Big { .. },
+            DeskEvent::PointerEnlarged { at_ms } | DeskEvent::PhoneActive { at_ms },
         ) => Pointer::Big {
-            last_phone_input_ms,
-            last_seen: Some(p),
+            last_phone_input_ms: at_ms,
         },
         (Pointer::Normal | Pointer::Big { .. }, DeskEvent::PointerRestored) => Pointer::Normal,
-        (pointer, DeskEvent::ViewerJoined | DeskEvent::ViewerLeft)
-        | (pointer @ Pointer::Normal, DeskEvent::PhoneActive { .. } | DeskEvent::CursorSeen(_)) => {
-            pointer
-        }
+        (pointer, DeskEvent::ViewerJoined | DeskEvent::ViewerLeft) => pointer,
     };
     let viewers: u32 = match event {
         DeskEvent::ViewerJoined => state.viewers.saturating_add(1),
         DeskEvent::ViewerLeft => state.viewers.saturating_sub(1),
         DeskEvent::PointerEnlarged { .. }
         | DeskEvent::PhoneActive { .. }
-        | DeskEvent::CursorSeen(_)
         | DeskEvent::PointerRestored => state.viewers,
     };
     Desk { viewers, pointer }
 }
 
 pub fn all_states() -> Vec<Desk> {
-    let pointers: [Pointer; 3] = [
+    let pointers: [Pointer; 2] = [
         Pointer::Normal,
         Pointer::Big {
             last_phone_input_ms: 1000,
-            last_seen: None,
-        },
-        Pointer::Big {
-            last_phone_input_ms: 1000,
-            last_seen: Some(Point { x: 0, y: 0 }),
         },
     ];
     (0..=2)
@@ -207,18 +158,8 @@ pub fn all_inputs() -> Vec<DeskInput> {
         DeskInput::ViewerJoined,
         DeskInput::ViewerLeft,
         DeskInput::PhoneInput { at_ms: 1100 },
-        DeskInput::CursorSampled {
-            at: Point { x: 0, y: 0 },
-            at_ms: 1100,
-        },
-        DeskInput::CursorSampled {
-            at: Point { x: 5, y: 0 },
-            at_ms: 1100,
-        },
-        DeskInput::CursorSampled {
-            at: Point { x: 5, y: 0 },
-            at_ms: 1400,
-        },
+        DeskInput::InputActivity { at_ms: 1100 },
+        DeskInput::InputActivity { at_ms: 1400 },
     ]
 }
 
@@ -239,17 +180,13 @@ mod tests {
             DeskInput::ViewerJoined => 0,
             DeskInput::ViewerLeft => 1,
             DeskInput::PhoneInput { .. } => 2,
-            DeskInput::CursorSampled { .. } => 3,
+            DeskInput::InputActivity { .. } => 3,
         }
     }
 
-    const ORIGIN: Point = Point { x: 0, y: 0 };
-    const MOVED: Point = Point { x: 5, y: 0 };
-
-    fn big(last_seen: Option<Point>) -> Pointer {
+    fn big(last_phone_input_ms: u64) -> Pointer {
         Pointer::Big {
-            last_phone_input_ms: 1000,
-            last_seen,
+            last_phone_input_ms,
         }
     }
 
@@ -267,15 +204,12 @@ mod tests {
     fn restore() -> Decision<DeskEvent, DeskCommand> {
         decision(
             vec![DeskEvent::PointerRestored],
-            vec![
-                DeskCommand::SetPointer(PointerSize::Normal),
-                DeskCommand::StopLocalMouseWatch,
-            ],
+            vec![DeskCommand::SetPointer(PointerSize::Normal)],
         )
     }
 
-    fn sampled(at: Point, at_ms: u64) -> DeskInput {
-        DeskInput::CursorSampled { at, at_ms }
+    fn activity(at_ms: u64) -> DeskInput {
+        DeskInput::InputActivity { at_ms }
     }
 
     #[test]
@@ -306,14 +240,11 @@ mod tests {
             all_states(),
             vec![
                 desk(0, Pointer::Normal),
-                desk(0, big(None)),
-                desk(0, big(Some(ORIGIN))),
+                desk(0, big(1000)),
                 desk(1, Pointer::Normal),
-                desk(1, big(None)),
-                desk(1, big(Some(ORIGIN))),
+                desk(1, big(1000)),
                 desk(2, Pointer::Normal),
-                desk(2, big(None)),
-                desk(2, big(Some(ORIGIN))),
+                desk(2, big(1000)),
             ]
         );
     }
@@ -326,9 +257,8 @@ mod tests {
                 DeskInput::ViewerJoined,
                 DeskInput::ViewerLeft,
                 DeskInput::PhoneInput { at_ms: 1100 },
-                sampled(ORIGIN, 1100),
-                sampled(MOVED, 1100),
-                sampled(MOVED, 1400),
+                activity(1100),
+                activity(1400),
             ]
         );
     }
@@ -360,7 +290,7 @@ mod tests {
     #[test]
     fn viewer_left_with_no_viewers_does_nothing() {
         assert_eq!(
-            decide(&desk(0, big(None)), DeskInput::ViewerLeft),
+            decide(&desk(0, big(1000)), DeskInput::ViewerLeft),
             Decision::none()
         );
     }
@@ -376,13 +306,12 @@ mod tests {
     #[test]
     fn last_viewer_left_with_big_pointer_restores_it() {
         assert_eq!(
-            decide(&desk(1, big(Some(ORIGIN))), DeskInput::ViewerLeft),
+            decide(&desk(1, big(1000)), DeskInput::ViewerLeft),
             decision(
                 vec![DeskEvent::ViewerLeft, DeskEvent::PointerRestored],
                 vec![
                     DeskCommand::StopCapture,
                     DeskCommand::SetPointer(PointerSize::Normal),
-                    DeskCommand::StopLocalMouseWatch,
                 ]
             )
         );
@@ -391,7 +320,7 @@ mod tests {
     #[test]
     fn one_of_many_viewers_left_keeps_big_pointer() {
         assert_eq!(
-            decide(&desk(2, big(None)), DeskInput::ViewerLeft),
+            decide(&desk(2, big(1000)), DeskInput::ViewerLeft),
             decision(vec![DeskEvent::ViewerLeft], vec![])
         );
     }
@@ -405,10 +334,7 @@ mod tests {
             ),
             decision(
                 vec![DeskEvent::PointerEnlarged { at_ms: 1100 }],
-                vec![
-                    DeskCommand::SetPointer(PointerSize::Big),
-                    DeskCommand::StartLocalMouseWatch
-                ]
+                vec![DeskCommand::SetPointer(PointerSize::Big)]
             )
         );
     }
@@ -416,81 +342,53 @@ mod tests {
     #[test]
     fn phone_input_with_big_pointer_marks_activity() {
         assert_eq!(
-            decide(
-                &desk(1, big(Some(ORIGIN))),
-                DeskInput::PhoneInput { at_ms: 1100 }
-            ),
+            decide(&desk(1, big(1000)), DeskInput::PhoneInput { at_ms: 1100 }),
             decision(vec![DeskEvent::PhoneActive { at_ms: 1100 }], vec![])
         );
     }
 
     #[test]
-    fn cursor_with_normal_pointer_does_nothing() {
+    fn activity_with_normal_pointer_does_nothing() {
         assert_eq!(
-            decide(&desk(1, Pointer::Normal), sampled(MOVED, 1400)),
+            decide(&desk(1, Pointer::Normal), activity(5000)),
             Decision::none()
         );
     }
 
     #[test]
-    fn first_cursor_sample_is_recorded() {
+    fn activity_soon_after_phone_input_is_the_phones_own() {
         assert_eq!(
-            decide(&desk(1, big(None)), sampled(MOVED, 1400)),
-            decision(vec![DeskEvent::CursorSeen(MOVED)], vec![])
-        );
-    }
-
-    #[test]
-    fn unmoved_cursor_does_nothing() {
-        assert_eq!(
-            decide(&desk(1, big(Some(ORIGIN))), sampled(ORIGIN, 1400)),
+            decide(&desk(1, big(1000)), activity(1100)),
             Decision::none()
         );
     }
 
     #[test]
-    fn cursor_moved_soon_after_phone_input_is_recorded() {
+    fn activity_exactly_at_quiet_limit_is_still_the_phones() {
         assert_eq!(
-            decide(&desk(1, big(Some(ORIGIN))), sampled(MOVED, 1100)),
-            decision(vec![DeskEvent::CursorSeen(MOVED)], vec![])
+            decide(&desk(1, big(1000)), activity(1000 + PHONE_QUIET_MS)),
+            Decision::none()
         );
     }
 
     #[test]
-    fn cursor_moved_exactly_at_quiet_limit_is_recorded() {
+    fn activity_just_after_quiet_limit_is_real_input_and_restores_pointer() {
         assert_eq!(
-            decide(
-                &desk(1, big(Some(ORIGIN))),
-                sampled(MOVED, 1000 + PHONE_QUIET_MS)
-            ),
-            decision(vec![DeskEvent::CursorSeen(MOVED)], vec![])
-        );
-    }
-
-    #[test]
-    fn cursor_moved_just_after_quiet_limit_restores_pointer() {
-        assert_eq!(
-            decide(
-                &desk(1, big(Some(ORIGIN))),
-                sampled(MOVED, 1001 + PHONE_QUIET_MS)
-            ),
+            decide(&desk(1, big(1000)), activity(1001 + PHONE_QUIET_MS)),
             restore()
         );
     }
 
     #[test]
-    fn cursor_sampled_before_phone_input_time_is_recorded() {
-        assert_eq!(
-            decide(&desk(1, big(Some(ORIGIN))), sampled(MOVED, 0)),
-            decision(vec![DeskEvent::CursorSeen(MOVED)], vec![])
-        );
+    fn activity_stamped_before_phone_input_is_the_phones() {
+        assert_eq!(decide(&desk(1, big(1000)), activity(0)), Decision::none());
     }
 
     #[test]
     fn viewer_joined_adds_viewer() {
         assert_eq!(
-            evolve(desk(1, big(None)), &DeskEvent::ViewerJoined),
-            desk(2, big(None))
+            evolve(desk(1, big(1000)), &DeskEvent::ViewerJoined),
+            desk(2, big(1000))
         );
     }
 
@@ -505,8 +403,8 @@ mod tests {
     #[test]
     fn viewer_left_removes_viewer() {
         assert_eq!(
-            evolve(desk(2, big(None)), &DeskEvent::ViewerLeft),
-            desk(1, big(None))
+            evolve(desk(2, big(1000)), &DeskEvent::ViewerLeft),
+            desk(1, big(1000))
         );
     }
 
@@ -519,81 +417,28 @@ mod tests {
     }
 
     #[test]
-    fn pointer_enlarged_makes_fresh_big_pointer() {
+    fn pointer_enlarged_makes_big_pointer() {
         assert_eq!(
             evolve(
                 desk(1, Pointer::Normal),
                 &DeskEvent::PointerEnlarged { at_ms: 1000 }
             ),
-            desk(1, big(None))
-        );
-    }
-
-    #[test]
-    fn pointer_enlarged_resets_big_pointer() {
-        assert_eq!(
-            evolve(
-                desk(1, big(Some(ORIGIN))),
-                &DeskEvent::PointerEnlarged { at_ms: 2000 }
-            ),
-            desk(
-                1,
-                Pointer::Big {
-                    last_phone_input_ms: 2000,
-                    last_seen: None
-                }
-            )
+            desk(1, big(1000))
         );
     }
 
     #[test]
     fn phone_active_updates_input_time() {
         assert_eq!(
-            evolve(
-                desk(1, big(Some(ORIGIN))),
-                &DeskEvent::PhoneActive { at_ms: 2000 }
-            ),
-            desk(
-                1,
-                Pointer::Big {
-                    last_phone_input_ms: 2000,
-                    last_seen: Some(ORIGIN)
-                }
-            )
-        );
-    }
-
-    #[test]
-    fn phone_active_with_normal_pointer_changes_nothing() {
-        assert_eq!(
-            evolve(
-                desk(1, Pointer::Normal),
-                &DeskEvent::PhoneActive { at_ms: 2000 }
-            ),
-            desk(1, Pointer::Normal)
-        );
-    }
-
-    #[test]
-    fn cursor_seen_records_position() {
-        assert_eq!(
-            evolve(desk(1, big(Some(ORIGIN))), &DeskEvent::CursorSeen(MOVED)),
-            desk(1, big(Some(MOVED)))
-        );
-    }
-
-    #[test]
-    fn cursor_seen_with_normal_pointer_changes_nothing() {
-        assert_eq!(
-            evolve(desk(1, Pointer::Normal), &DeskEvent::CursorSeen(MOVED)),
-            desk(1, Pointer::Normal)
+            evolve(desk(1, big(1000)), &DeskEvent::PhoneActive { at_ms: 2000 }),
+            desk(1, big(2000))
         );
     }
 
     #[test]
     fn pointer_restored_makes_pointer_normal() {
         assert_eq!(
-            evolve(desk(2, big(Some(ORIGIN))), &DeskEvent::PointerRestored),
+            evolve(desk(2, big(1000)), &DeskEvent::PointerRestored),
             desk(2, Pointer::Normal)
         );
     }

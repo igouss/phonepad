@@ -1,3 +1,4 @@
+mod activity;
 mod capture;
 mod clock;
 mod desk;
@@ -78,7 +79,8 @@ async fn serve() -> anyhow::Result<()> {
             .unwrap_or(DEFAULT_POINTER),
         big: BIG_POINTER,
     };
-    let desk: mpsc::Sender<DeskMessage> = desk::spawn(pointer, clock, feed);
+    let desk: mpsc::Sender<DeskMessage> = desk::spawn(pointer, feed);
+    activity::spawn(desk.clone(), clock);
     let ports: SessionPorts = SessionPorts {
         desk: desk.clone(),
         input,

@@ -81,15 +81,15 @@ impl Session {
     async fn on_text(&mut self, text: &str) -> anyhow::Result<()> {
         match wire::parse(text) {
             Ok(PhoneMessage::Input(command)) => {
+                self.tell_desk(DeskInput::PhoneInput {
+                    at_ms: self.ports.clock.now_ms(),
+                })
+                .await?;
                 self.ports
                     .input
                     .send(command)
                     .await
-                    .map_err(|_| anyhow!("input thread gone"))?;
-                self.tell_desk(DeskInput::PhoneInput {
-                    at_ms: self.ports.clock.now_ms(),
-                })
-                .await
+                    .map_err(|_| anyhow!("input thread gone"))
             }
             Ok(PhoneMessage::Visible(visible)) => {
                 self.step(StreamInput::Visibility(visible), None).await

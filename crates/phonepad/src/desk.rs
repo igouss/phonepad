@@ -2,18 +2,14 @@ use std::time::Duration;
 
 use phonepad_core::decision::Decision;
 use phonepad_core::desk::{self, Desk, DeskCommand, DeskEvent, DeskInput, PointerSize};
-use phonepad_core::geometry::Point;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::{self, JoinHandle};
 use tokio::time::{self, Interval, MissedTickBehavior};
 
 use crate::capture::{Capture, Feed};
-use crate::clock::Clock;
-use crate::hypr;
 use crate::owe::WallpaperShell;
 use crate::tool;
 
-const LOCAL_MOUSE_POLL: Duration = Duration::from_millis(100);
 const QUEUE: usize = 64;
 const CAPTURE_STOP_BOUND: Duration = Duration::from_secs(1);
 const CAPTURE_RESTART_BACKOFF: Duration = Duration::from_secs(1);
@@ -43,27 +39,23 @@ pub struct DeskShell {
     desk: Desk,
     capture: Option<RunningCapture>,
     capture_generation: u64,
-    local_mouse_watch: Option<JoinHandle<()>>,
     wallpaper_watch: Option<JoinHandle<()>>,
     pointer: PointerStyle,
     wallpaper: WallpaperShell,
-    clock: Clock,
     feed: Feed,
     inbox: mpsc::Sender<DeskMessage>,
 }
 
-pub fn spawn(pointer: PointerStyle, clock: Clock, feed: Feed) -> mpsc::Sender<DeskMessage> {
+pub fn spawn(pointer: PointerStyle, feed: Feed) -> mpsc::Sender<DeskMessage> {
     let (inbox, receiver): (mpsc::Sender<DeskMessage>, mpsc::Receiver<DeskMessage>) =
         mpsc::channel(QUEUE);
     let shell: DeskShell = DeskShell {
         desk: Desk::initial(),
         capture: None,
         capture_generation: 0,
-        local_mouse_watch: None,
         wallpaper_watch: None,
         pointer,
         wallpaper: WallpaperShell::from_env(),
-        clock,
         feed,
         inbox: inbox.clone(),
     };
@@ -107,8 +99,6 @@ impl DeskShell {
             }
             DeskCommand::StopCapture => self.stop_capture().await,
             DeskCommand::SetPointer(size) => self.set_pointer(size).await,
-            DeskCommand::StartLocalMouseWatch => self.start_local_mouse_watch(),
-            DeskCommand::StopLocalMouseWatch => self.stop_local_mouse_watch(),
         }
     }
 
@@ -187,22 +177,7 @@ impl DeskShell {
         self.wallpaper_watch = Some(tokio::spawn(watch_wallpaper(self.inbox.clone())));
     }
 
-    fn start_local_mouse_watch(&mut self) {
-        self.stop_local_mouse_watch();
-        self.local_mouse_watch = Some(tokio::spawn(watch_local_mouse(
-            self.inbox.clone(),
-            self.clock,
-        )));
-    }
-
-    fn stop_local_mouse_watch(&mut self) {
-        if let Some(watch) = self.local_mouse_watch.take() {
-            watch.abort();
-        }
-    }
-
     async fn shutdown(&mut self) {
-        self.stop_local_mouse_watch();
         self.stop_capture().await;
         self.set_pointer(PointerSize::Normal).await;
     }
@@ -232,34 +207,6 @@ async fn watch_wallpaper(inbox: mpsc::Sender<DeskMessage>) {
     loop {
         ticks.tick().await;
         if inbox.send(DeskMessage::WallpaperTick).await.is_err() {
-            return;
-        }
-    }
-}
-
-async fn watch_local_mouse(inbox: mpsc::Sender<DeskMessage>, clock: Clock) {
-    let mut ticks: Interval = time::interval(LOCAL_MOUSE_POLL);
-    ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    loop {
-        ticks.tick().await;
-        let sampled: Result<anyhow::Result<Point>, task::JoinError> =
-            task::spawn_blocking(hypr::cursor).await;
-        let at: Point = match sampled {
-            Ok(Ok(at)) => at,
-            Ok(Err(err)) => {
-                eprintln!("cursor sample: {err:#}");
-                continue;
-            }
-            Err(err) => {
-                eprintln!("cursor sample: {err}");
-                continue;
-            }
-        };
-        let input: DeskInput = DeskInput::CursorSampled {
-            at,
-            at_ms: clock.now_ms(),
-        };
-        if inbox.send(DeskMessage::Input(input)).await.is_err() {
             return;
         }
     }

@@ -1,61 +1,31 @@
 stateDiagram-v2
   state "Desk { viewers: 0, pointer: Normal }" as s_Desk_viewers_0_pointer_Normal
-  state "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1000, last_seen: None } }" as s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_None
-  state "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 0, y: 0 }) } }" as s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0
+  state "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1000 } }" as s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000
   state "Desk { viewers: 1, pointer: Normal }" as s_Desk_viewers_1_pointer_Normal
-  state "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1000, last_seen: None } }" as s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None
-  state "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 0, y: 0 }) } }" as s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0
+  state "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1000 } }" as s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000
   state "Desk { viewers: 2, pointer: Normal }" as s_Desk_viewers_2_pointer_Normal
-  state "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1000, last_seen: None } }" as s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None
-  state "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 0, y: 0 }) } }" as s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0
-  state "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1100, last_seen: None } }" as s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100_last_seen_None
-  state "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 5, y: 0 }) } }" as s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0
-  state "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1100, last_seen: Some(Point { x: 0, y: 0 }) } }" as s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100_last_seen_Some_Point_x_0_y_0
-  state "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1100, last_seen: None } }" as s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100_last_seen_None
-  state "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 5, y: 0 }) } }" as s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0
-  state "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1100, last_seen: Some(Point { x: 0, y: 0 }) } }" as s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100_last_seen_Some_Point_x_0_y_0
+  state "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1000 } }" as s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000
+  state "Desk { viewers: 0, pointer: Big { last_phone_input_ms: 1100 } }" as s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100
+  state "Desk { viewers: 1, pointer: Big { last_phone_input_ms: 1100 } }" as s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100
   state "Desk { viewers: 3, pointer: Normal }" as s_Desk_viewers_3_pointer_Normal
-  state "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1100, last_seen: None } }" as s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100_last_seen_None
-  state "Desk { viewers: 3, pointer: Big { last_phone_input_ms: 1000, last_seen: None } }" as s_Desk_viewers_3_pointer_Big_last_phone_input_ms_1000_last_seen_None
-  state "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 5, y: 0 }) } }" as s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0
-  state "Desk { viewers: 3, pointer: Big { last_phone_input_ms: 1000, last_seen: Some(Point { x: 0, y: 0 }) } }" as s_Desk_viewers_3_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0
-  state "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1100, last_seen: Some(Point { x: 0, y: 0 }) } }" as s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100_last_seen_Some_Point_x_0_y_0
+  state "Desk { viewers: 2, pointer: Big { last_phone_input_ms: 1100 } }" as s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100
+  state "Desk { viewers: 3, pointer: Big { last_phone_input_ms: 1000 } }" as s_Desk_viewers_3_pointer_Big_last_phone_input_ms_1000
   s_Desk_viewers_0_pointer_Normal --> s_Desk_viewers_1_pointer_Normal : ViewerJoined / StartCapture
-  s_Desk_viewers_0_pointer_Normal --> s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100_last_seen_None : PhoneInput { at_ms: 1100 } / SetPointer(Big), StartLocalMouseWatch
-  s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_None --> s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None : ViewerJoined / StartCapture
-  s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_None --> s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100_last_seen_None : PhoneInput { at_ms: 1100 }
-  s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_None --> s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 : CursorSampled { at: Point { x: 0, y: 0 }, at_ms: 1100 }
-  s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_None --> s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0 : CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1100 }
-  s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_None --> s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0 : CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1400 }
-  s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 --> s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 : ViewerJoined / StartCapture
-  s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 --> s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100_last_seen_Some_Point_x_0_y_0 : PhoneInput { at_ms: 1100 }
-  s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 --> s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0 : CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1100 }
-  s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 --> s_Desk_viewers_0_pointer_Normal : CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1400 } / SetPointer(Normal), StopLocalMouseWatch
+  s_Desk_viewers_0_pointer_Normal --> s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100 : PhoneInput { at_ms: 1100 } / SetPointer(Big)
+  s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000 --> s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000 : ViewerJoined / StartCapture
+  s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000 --> s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1100 : PhoneInput { at_ms: 1100 }
+  s_Desk_viewers_0_pointer_Big_last_phone_input_ms_1000 --> s_Desk_viewers_0_pointer_Normal : InputActivity { at_ms: 1400 } / SetPointer(Normal)
   s_Desk_viewers_1_pointer_Normal --> s_Desk_viewers_2_pointer_Normal : ViewerJoined
   s_Desk_viewers_1_pointer_Normal --> s_Desk_viewers_0_pointer_Normal : ViewerLeft / StopCapture
-  s_Desk_viewers_1_pointer_Normal --> s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100_last_seen_None : PhoneInput { at_ms: 1100 } / SetPointer(Big), StartLocalMouseWatch
-  s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None --> s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None : ViewerJoined
-  s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None --> s_Desk_viewers_0_pointer_Normal : ViewerLeft / StopCapture, SetPointer(Normal), StopLocalMouseWatch
-  s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None --> s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100_last_seen_None : PhoneInput { at_ms: 1100 }
-  s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None --> s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 : CursorSampled { at: Point { x: 0, y: 0 }, at_ms: 1100 }
-  s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None --> s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0 : CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1100 }
-  s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None --> s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0 : CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1400 }
-  s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 --> s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 : ViewerJoined
-  s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 --> s_Desk_viewers_0_pointer_Normal : ViewerLeft / StopCapture, SetPointer(Normal), StopLocalMouseWatch
-  s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 --> s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100_last_seen_Some_Point_x_0_y_0 : PhoneInput { at_ms: 1100 }
-  s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 --> s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0 : CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1100 }
-  s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 --> s_Desk_viewers_1_pointer_Normal : CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1400 } / SetPointer(Normal), StopLocalMouseWatch
+  s_Desk_viewers_1_pointer_Normal --> s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100 : PhoneInput { at_ms: 1100 } / SetPointer(Big)
+  s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000 --> s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000 : ViewerJoined
+  s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000 --> s_Desk_viewers_0_pointer_Normal : ViewerLeft / StopCapture, SetPointer(Normal)
+  s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000 --> s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1100 : PhoneInput { at_ms: 1100 }
+  s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000 --> s_Desk_viewers_1_pointer_Normal : InputActivity { at_ms: 1400 } / SetPointer(Normal)
   s_Desk_viewers_2_pointer_Normal --> s_Desk_viewers_3_pointer_Normal : ViewerJoined
   s_Desk_viewers_2_pointer_Normal --> s_Desk_viewers_1_pointer_Normal : ViewerLeft
-  s_Desk_viewers_2_pointer_Normal --> s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100_last_seen_None : PhoneInput { at_ms: 1100 } / SetPointer(Big), StartLocalMouseWatch
-  s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None --> s_Desk_viewers_3_pointer_Big_last_phone_input_ms_1000_last_seen_None : ViewerJoined
-  s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None --> s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_None : ViewerLeft
-  s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None --> s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100_last_seen_None : PhoneInput { at_ms: 1100 }
-  s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None --> s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 : CursorSampled { at: Point { x: 0, y: 0 }, at_ms: 1100 }
-  s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None --> s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0 : CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1100 }
-  s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_None --> s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0 : CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1400 }
-  s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 --> s_Desk_viewers_3_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 : ViewerJoined
-  s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 --> s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 : ViewerLeft
-  s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 --> s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100_last_seen_Some_Point_x_0_y_0 : PhoneInput { at_ms: 1100 }
-  s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 --> s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_5_y_0 : CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1100 }
-  s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000_last_seen_Some_Point_x_0_y_0 --> s_Desk_viewers_2_pointer_Normal : CursorSampled { at: Point { x: 5, y: 0 }, at_ms: 1400 } / SetPointer(Normal), StopLocalMouseWatch
+  s_Desk_viewers_2_pointer_Normal --> s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100 : PhoneInput { at_ms: 1100 } / SetPointer(Big)
+  s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000 --> s_Desk_viewers_3_pointer_Big_last_phone_input_ms_1000 : ViewerJoined
+  s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000 --> s_Desk_viewers_1_pointer_Big_last_phone_input_ms_1000 : ViewerLeft
+  s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000 --> s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1100 : PhoneInput { at_ms: 1100 }
+  s_Desk_viewers_2_pointer_Big_last_phone_input_ms_1000 --> s_Desk_viewers_2_pointer_Normal : InputActivity { at_ms: 1400 } / SetPointer(Normal)
