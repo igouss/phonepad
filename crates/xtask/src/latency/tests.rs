@@ -1,4 +1,4 @@
-use super::{DEFAULT_PORT, calibration, link, runtime_name};
+use super::{DEFAULT_PORT, Phase, calibration, link, phases, plan, runtime_name};
 
 #[test]
 fn calibration_adds_100_and_200_ms_to_a_bare_link_then_caps_it_at_2_mbit() {
@@ -24,4 +24,52 @@ fn the_default_port_keeps_the_default_runtime_dir() {
 #[test]
 fn another_port_gets_its_own_runtime_dir() {
     assert_eq!(runtime_name(8781), "pplat8781");
+}
+
+fn rates(words: &[&str]) -> Result<Vec<(String, Option<u32>)>, String> {
+    phases(&plan(words)?).map(|phases: Vec<Phase>| {
+        phases
+            .into_iter()
+            .map(|phase: Phase| (phase.profile.name, phase.hz))
+            .collect()
+    })
+}
+
+#[test]
+fn live_phases_have_no_content_rate() {
+    assert_eq!(rates(&["lte"]), Ok(vec![(String::from("lte"), None)]));
+}
+
+#[test]
+fn nested_phases_all_paint_at_the_planned_rate() {
+    assert_eq!(
+        rates(&["nested", "hz=125", "viewer", "lan", "lte"]),
+        Ok(vec![
+            (String::from("lan"), Some(125)),
+            (String::from("lte"), Some(125))
+        ])
+    );
+}
+
+#[test]
+fn the_content_known_case_paints_lan_still_slow_and_fast() {
+    assert_eq!(
+        rates(&["nested", "calibrate"]),
+        Ok(vec![
+            (String::from("lan"), Some(0)),
+            (String::from("lan"), Some(20)),
+            (String::from("lan"), Some(125))
+        ])
+    );
+}
+
+#[test]
+fn the_emulator_known_case_has_no_content_rate() {
+    assert_eq!(
+        rates(&["calibrate"]).map(|phases: Vec<(String, Option<u32>)>| phases
+            .into_iter()
+            .map(|(_, hz)| hz)
+            .collect::<Vec<Option<u32>>>()),
+        Ok(vec![None, None, None, None])
+    );
 }
