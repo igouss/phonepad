@@ -9,11 +9,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
 use axum::body::Bytes;
-use phonepad_core::geometry::{Point, Size};
+use phonepad_core::geometry::{Monitor, Point, Size};
 use phonepad_core::stream::UnitKind;
 use tokio::sync::{broadcast, watch};
 
 use self::screencopy::run;
+use crate::input::Applied;
 
 #[derive(Clone, Debug)]
 pub struct Unit {
@@ -21,6 +22,13 @@ pub struct Unit {
     pub id: u32,
     pub captured_ns: u64,
     pub message: Bytes,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pointer {
+    pub at: Point,
+    pub applied: Applied,
+    pub monitor: Monitor,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -44,7 +52,8 @@ impl KeyframeRequest {
 pub struct Feed {
     pub render_node: PathBuf,
     pub view: watch::Receiver<Option<Size>>,
-    pub cursor: watch::Sender<Option<Point>>,
+    pub cursor: watch::Sender<Option<Pointer>>,
+    pub applied: watch::Receiver<Applied>,
     pub units: broadcast::Sender<Unit>,
     pub keyframe: KeyframeRequest,
 }

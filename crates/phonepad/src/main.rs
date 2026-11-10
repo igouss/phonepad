@@ -20,16 +20,16 @@ use std::time::Duration;
 
 use anyhow::{Context, anyhow};
 use axum::serve::ListenerExt;
-use phonepad_core::geometry::{Point, Size};
-use phonepad_core::input::InputCommand;
+use phonepad_core::geometry::Size;
 use tokio::net::TcpListener;
 use tokio::runtime::{self, Runtime};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
-use crate::capture::{Feed, KeyframeRequest, Unit};
+use crate::capture::{Feed, KeyframeRequest, Pointer, Unit};
 use crate::clock::Clock;
 use crate::desk::{DeskMessage, PointerStyle};
+use crate::input::{Applied, Injection, PhoneIds};
 use crate::session::SessionPorts;
 
 const BIG_POINTER: u32 = 64;
@@ -58,19 +58,24 @@ async fn serve() -> anyhow::Result<()> {
     let port: u16 = port.parse().context("port")?;
 
     let clock: Clock = Clock::start();
-    let input: mpsc::Sender<InputCommand> =
-        input::spawn(input::open_device().context("create uinput device")?);
+    let (applied, applied_watch): (watch::Sender<Applied>, watch::Receiver<Applied>) =
+        watch::channel(Applied::new());
+    let input: mpsc::Sender<Injection> = input::spawn(
+        input::open_device().context("create uinput device")?,
+        applied,
+    );
     let (view, view_watch): (watch::Sender<Option<Size>>, watch::Receiver<Option<Size>>) =
         watch::channel(None);
     let (units, _): (broadcast::Sender<Unit>, broadcast::Receiver<Unit>) =
         broadcast::channel(UNIT_BACKLOG);
     let keyframe: KeyframeRequest = KeyframeRequest::default();
-    let cursor: watch::Sender<Option<Point>> = watch::Sender::new(None);
+    let cursor: watch::Sender<Option<Pointer>> = watch::Sender::new(None);
     let feed: Feed = Feed {
         render_node: env::var_os("PHONEPAD_RENDER_NODE")
             .map_or_else(|| PathBuf::from(DEFAULT_RENDER_NODE), PathBuf::from),
         view: view_watch,
         cursor: cursor.clone(),
+        applied: applied_watch,
         units: units.clone(),
         keyframe: keyframe.clone(),
     };
@@ -91,6 +96,7 @@ async fn serve() -> anyhow::Result<()> {
         keyframe,
         view,
         cursor,
+        phones: PhoneIds::default(),
         clock,
         timings: env::var_os(TIMINGS).is_some(),
     };

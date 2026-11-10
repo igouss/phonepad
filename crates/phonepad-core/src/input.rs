@@ -7,7 +7,6 @@ pub enum Button {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InputCommand {
-    Move { dx: i32, dy: i32 },
     Scroll { dx: i32, dy: i32 },
     Button { button: Button, pressed: bool },
     Chord(Vec<u16>),

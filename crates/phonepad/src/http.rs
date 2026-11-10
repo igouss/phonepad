@@ -92,7 +92,6 @@ async fn websocket(State(ports): State<SessionPorts>, upgrade: WebSocketUpgrade)
 mod tests {
     use axum::body::Body;
     use axum::http::HeaderValue;
-    use phonepad_core::input::InputCommand;
     use tokio::sync::{broadcast, mpsc, watch};
     use tower::ServiceExt;
 
@@ -100,6 +99,7 @@ mod tests {
     use crate::capture::{KeyframeRequest, Unit};
     use crate::clock::Clock;
     use crate::desk::DeskMessage;
+    use crate::input::{Injection, PhoneIds};
 
     const LOGIN: &str = "owner@example.com";
 
@@ -111,7 +111,7 @@ mod tests {
 
     async fn get_path(path: &str, login: Option<&str>) -> Reply {
         let (desk, _): (mpsc::Sender<DeskMessage>, _) = mpsc::channel(1);
-        let (input, _): (mpsc::Sender<InputCommand>, _) = mpsc::channel(1);
+        let (input, _): (mpsc::Sender<Injection>, _) = mpsc::channel(1);
         let (view, _) = watch::channel(None);
         let (units, _): (broadcast::Sender<Unit>, broadcast::Receiver<Unit>) =
             broadcast::channel(1);
@@ -122,6 +122,7 @@ mod tests {
             keyframe: KeyframeRequest::default(),
             view,
             cursor: watch::Sender::new(None),
+            phones: PhoneIds::default(),
             clock: Clock::start(),
             timings: false,
         };

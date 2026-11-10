@@ -6,7 +6,7 @@ use tungstenite::handshake::client::Request;
 use tungstenite::http::HeaderValue;
 use tungstenite::{HandshakeError, Message, WebSocket};
 
-pub const HEADER: usize = 9;
+pub const POINTER_MESSAGE: usize = 29;
 pub const FRAME_HEADER: usize = 14;
 pub const FRAME_TAG: u8 = 0;
 pub const CURSOR_TAG: u8 = 1;

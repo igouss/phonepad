@@ -4,7 +4,7 @@ use phonepad_h264::nal;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-pub use crate::viewer::{CURSOR_TAG, FRAME_HEADER, FRAME_TAG, HEADER};
+pub use crate::viewer::{CURSOR_TAG, FRAME_HEADER, FRAME_TAG, POINTER_MESSAGE};
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Tally {
@@ -32,7 +32,7 @@ pub fn tally(binary: &[Vec<u8>], texts: usize) -> Tally {
         |mut tally: Tally, payload: &Vec<u8>| {
             match (
                 payload.first(),
-                payload.get(HEADER..),
+                payload.get(POINTER_MESSAGE..),
                 payload.get(FRAME_HEADER..),
             ) {
                 (Some(&CURSOR_TAG), Some([]), _) => tally.cursors += 1,

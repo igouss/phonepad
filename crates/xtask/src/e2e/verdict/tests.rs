@@ -1,5 +1,5 @@
 use super::{
-    CURSOR_TAG, Decoded, FRAME_HEADER, FRAME_TAG, HEADER, Tally, distinct, frame_hashes,
+    CURSOR_TAG, Decoded, FRAME_HEADER, FRAME_TAG, POINTER_MESSAGE, Tally, distinct, frame_hashes,
     shutdown_check, status_check, tally, viewer_checks,
 };
 use crate::report::Check;
@@ -22,7 +22,7 @@ fn message(unit: &[u8]) -> Vec<u8> {
 fn cursor() -> Vec<u8> {
     [CURSOR_TAG]
         .iter()
-        .chain(&[0u8; HEADER - 1])
+        .chain(&[0u8; POINTER_MESSAGE - 1])
         .copied()
         .collect()
 }
@@ -90,7 +90,7 @@ fn a_bare_header_without_a_unit_is_malformed() {
 
 #[test]
 fn a_message_shorter_than_the_header_is_malformed() {
-    assert_eq!(tally(&[vec![0u8; HEADER - 1]], 0).malformed, 1);
+    assert_eq!(tally(&[vec![0u8; FRAME_HEADER - 1]], 0).malformed, 1);
 }
 
 #[test]

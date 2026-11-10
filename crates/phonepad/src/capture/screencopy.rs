@@ -6,7 +6,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
-use phonepad_core::geometry::{Monitor, Point, Size};
+use phonepad_core::geometry::{Monitor, Point, Size, monitor_under};
 use phonepad_h264::{Cropped, Dmabuf};
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::io::Errno;
@@ -25,16 +25,17 @@ use wayland_protocols::ext::image_copy_capture::v1::client::ext_image_copy_captu
 use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1;
 
 use crate::hypr;
+use crate::input::Applied;
 
 mod dispatch;
 mod pool;
 
-use super::cursor::Sampler;
+use super::cursor::{Sample, Sampler};
 use super::lane::Job;
 use super::plan::{
     self, Buffer, Constraints, Pending, Schedule, Shot, Shown, Slot, Target, schedule,
 };
-use super::{Feed, KeyframeRequest, Unit};
+use super::{Feed, KeyframeRequest, Pointer, Unit};
 use pool::{Pool, Surface};
 
 const RETRY: Duration = Duration::from_millis(100);
@@ -53,7 +54,8 @@ struct State {
     outputs: Vec<NamedOutput>,
     view: watch::Receiver<Option<Size>>,
     sampler: Sampler,
-    cursor: watch::Sender<Option<Point>>,
+    applied: watch::Receiver<Applied>,
+    cursor: watch::Sender<Option<Pointer>>,
     units: broadcast::Sender<Unit>,
     keyframe: KeyframeRequest,
     target: Option<Target>,
@@ -76,6 +78,7 @@ pub(super) fn run(stop: &AtomicBool, feed: Feed) -> anyhow::Result<()> {
         outputs: Vec::new(),
         view: feed.view,
         sampler: Sampler::new(Instant::now()),
+        applied: feed.applied,
         cursor: feed.cursor,
         units: feed.units,
         keyframe: feed.keyframe,
@@ -180,22 +183,16 @@ fn wait(queue: &mut EventQueue<State>, state: &mut State, timeout: Duration) -> 
     Ok(())
 }
 
+fn pointer(sample: &Sample, monitors: &[Monitor]) -> Option<Pointer> {
+    Some(Pointer {
+        at: sample.at,
+        applied: sample.applied.clone(),
+        monitor: monitor_under(sample.at, monitors)?.clone(),
+    })
+}
+
 impl State {
-    fn refresh_target(&mut self) -> anyhow::Result<()> {
-        let moved: bool = self.sampler.sample_if_due(Instant::now());
-        if moved {
-            self.cursor.send_replace(self.sampler.at());
-        }
-        let changed: bool = self.view.has_changed().unwrap_or(false) || moved;
-        if !changed && self.target.is_some() {
-            return Ok(());
-        }
-        let view: Option<Size> = *self.view.borrow_and_update();
-        let cursor: Option<Point> = self.sampler.at();
-        let (Some(view), Some(cursor)) = (view, cursor) else {
-            self.target = None;
-            return Ok(());
-        };
+    fn refresh_monitors(&mut self) -> anyhow::Result<()> {
         if self
             .monitors_at
             .is_none_or(|at: Instant| at.elapsed() > MONITORS_MAX_AGE)
@@ -203,6 +200,30 @@ impl State {
             self.monitors = hypr::monitors()?;
             self.monitors_at = Some(Instant::now());
         }
+        Ok(())
+    }
+
+    fn refresh_target(&mut self) -> anyhow::Result<()> {
+        let moved: bool = self.sampler.sample_if_due(Instant::now(), &self.applied);
+        let changed: bool = self.view.has_changed().unwrap_or(false) || moved;
+        if !changed && self.target.is_some() {
+            return Ok(());
+        }
+        let monitors: anyhow::Result<()> = self.refresh_monitors();
+        if moved {
+            self.cursor.send_replace(
+                self.sampler
+                    .at()
+                    .and_then(|sample: &Sample| pointer(sample, &self.monitors)),
+            );
+        }
+        monitors?;
+        let view: Option<Size> = *self.view.borrow_and_update();
+        let cursor: Option<Point> = self.sampler.at().map(|sample: &Sample| sample.at);
+        let (Some(view), Some(cursor)) = (view, cursor) else {
+            self.target = None;
+            return Ok(());
+        };
         self.target = plan::target(
             cursor,
             view,

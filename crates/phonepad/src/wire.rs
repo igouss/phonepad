@@ -2,7 +2,7 @@ use std::num::NonZeroU32;
 use std::str::FromStr;
 
 use evdev::KeyCode;
-use phonepad_core::geometry::{Point, Size, Transform};
+use phonepad_core::geometry::{Monitor, Point, Size, Transform};
 use phonepad_core::input::{Button, InputCommand};
 use serde::Deserialize;
 
@@ -11,7 +11,7 @@ use crate::timing::Drawn;
 #[derive(Deserialize)]
 #[serde(tag = "t", rename_all = "lowercase")]
 enum WireMessage {
-    Move { dx: i32, dy: i32 },
+    Move { dx: i32, dy: i32, s: u32 },
     Scroll { dx: i32, dy: i32 },
     Button { b: WireButton, down: u8 },
     Keys { k: Vec<String> },
@@ -33,6 +33,7 @@ enum WireButton {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PhoneMessage {
+    Move { dx: i32, dy: i32, seq: u32 },
     Input(InputCommand),
     Visible(bool),
     View(Option<Size>),
@@ -54,7 +55,7 @@ pub enum WireError {
 pub fn parse(text: &str) -> Result<PhoneMessage, WireError> {
     let message: WireMessage = serde_json::from_str(text)?;
     Ok(match message {
-        WireMessage::Move { dx, dy } => PhoneMessage::Input(InputCommand::Move { dx, dy }),
+        WireMessage::Move { dx, dy, s } => PhoneMessage::Move { dx, dy, seq: s },
         WireMessage::Scroll { dx, dy } => PhoneMessage::Input(InputCommand::Scroll { dx, dy }),
         WireMessage::Button { b, down } => PhoneMessage::Input(InputCommand::Button {
             button: button(b),
@@ -87,7 +88,7 @@ pub fn key_code(name: &str) -> Result<u16, WireError> {
 }
 
 const FRAME_TAG: u8 = 0;
-const CURSOR_TAG: u8 = 1;
+const POINTER_TAG: u8 = 1;
 
 fn position(at: Point) -> impl Iterator<Item = u8> {
     at.x.to_be_bytes().into_iter().chain(at.y.to_be_bytes())
@@ -102,9 +103,13 @@ pub fn frame_message(id: u32, window: Point, transform: Transform, unit: &[u8]) 
         .collect()
 }
 
-pub fn cursor_message(cursor: Point) -> Vec<u8> {
-    std::iter::once(CURSOR_TAG)
-        .chain(position(cursor))
+pub fn pointer_message(at: Point, applied: u32, monitor: &Monitor) -> Vec<u8> {
+    std::iter::once(POINTER_TAG)
+        .chain(position(at))
+        .chain(applied.to_be_bytes())
+        .chain(position(monitor.origin))
+        .chain(monitor.size.w.get().to_be_bytes())
+        .chain(monitor.size.h.get().to_be_bytes())
         .collect()
 }
 
@@ -144,11 +149,31 @@ mod tests {
     }
 
     #[test]
-    fn move_carries_signed_deltas() {
+    fn move_carries_signed_deltas_and_its_sequence_number() {
         assert_eq!(
-            input(r#"{"t":"move","dx":-3,"dy":7}"#),
-            command(InputCommand::Move { dx: -3, dy: 7 })
+            input(r#"{"t":"move","dx":-3,"dy":7,"s":4294967295}"#),
+            Ok(PhoneMessage::Move {
+                dx: -3,
+                dy: 7,
+                seq: u32::MAX
+            })
         );
+    }
+
+    #[test]
+    fn a_move_without_its_sequence_number_is_malformed() {
+        assert!(matches!(
+            parse(r#"{"t":"move","dx":1,"dy":0}"#),
+            Err(WireError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn a_negative_sequence_number_is_malformed() {
+        assert!(matches!(
+            parse(r#"{"t":"move","dx":1,"dy":0,"s":-1}"#),
+            Err(WireError::Malformed(_))
+        ));
     }
 
     #[test]
@@ -346,7 +371,7 @@ mod tests {
     #[test]
     fn missing_field_is_an_error() {
         assert!(matches!(
-            parse(r#"{"t":"move","dx":1}"#),
+            parse(r#"{"t":"move","dx":1,"s":1}"#),
             Err(WireError::Malformed(_))
         ));
     }
@@ -354,7 +379,7 @@ mod tests {
     #[test]
     fn fractional_delta_is_an_error() {
         assert!(matches!(
-            parse(r#"{"t":"move","dx":1.5,"dy":0}"#),
+            parse(r#"{"t":"move","dx":1.5,"dy":0,"s":1}"#),
             Err(WireError::Malformed(_))
         ));
     }
@@ -376,10 +401,29 @@ mod tests {
     }
 
     #[test]
-    fn a_cursor_is_tag_one_and_its_position() {
+    fn a_pointer_is_tag_one_its_position_the_last_applied_move_and_its_monitor() {
         assert_eq!(
-            cursor_message(Point { x: 258, y: 3 }),
-            vec![1, 0, 0, 1, 2, 0, 0, 0, 3]
+            pointer_message(
+                Point { x: 258, y: -3 },
+                0x0A0B_0C0D,
+                &Monitor {
+                    name: String::from("DP-1"),
+                    origin: Point { x: -1, y: 2 },
+                    size: Size {
+                        w: NonZeroU32::new(0x0102).unwrap(),
+                        h: NonZeroU32::new(0x0304).unwrap()
+                    },
+                    pixels: Size {
+                        w: NonZeroU32::new(9).unwrap(),
+                        h: NonZeroU32::new(9).unwrap()
+                    },
+                    transform: Transform::Rotate90
+                }
+            ),
+            vec![
+                1, 0, 0, 1, 2, 0xFF, 0xFF, 0xFF, 0xFD, 10, 11, 12, 13, 0xFF, 0xFF, 0xFF, 0xFF, 0,
+                0, 0, 2, 0, 0, 1, 2, 0, 0, 3, 4
+            ]
         );
     }
 }

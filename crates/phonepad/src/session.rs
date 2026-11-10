@@ -3,46 +3,50 @@ use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket};
 use phonepad_core::decision::Decision;
 use phonepad_core::desk::DeskInput;
-use phonepad_core::geometry::{Point, Size};
-use phonepad_core::input::InputCommand;
+use phonepad_core::geometry::Size;
 use phonepad_core::stream::{self, Offer, Stream, StreamCommand, StreamEvent, StreamInput};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{broadcast, mpsc, watch};
 
-use crate::capture::{KeyframeRequest, Unit};
+use crate::capture::{KeyframeRequest, Pointer, Unit};
 use crate::clock::{self, Clock};
 use crate::desk::DeskMessage;
-use crate::input;
+use crate::input::{self, Injection, PhoneId, PhoneIds};
 use crate::timing::{Drawn, Ledger, Record, Sent};
 use crate::wire::{self, PhoneMessage};
 
 #[derive(Clone)]
 pub struct SessionPorts {
     pub desk: mpsc::Sender<DeskMessage>,
-    pub input: mpsc::Sender<InputCommand>,
+    pub input: mpsc::Sender<Injection>,
     pub units: broadcast::Sender<Unit>,
     pub keyframe: KeyframeRequest,
     pub view: watch::Sender<Option<Size>>,
-    pub cursor: watch::Sender<Option<Point>>,
+    pub cursor: watch::Sender<Option<Pointer>>,
+    pub phones: PhoneIds,
     pub clock: Clock,
     pub timings: bool,
 }
 
 struct Session {
+    phone: PhoneId,
     socket: WebSocket,
     stream: Stream,
     units: Option<broadcast::Receiver<Unit>>,
-    cursor: Option<watch::Receiver<Option<Point>>>,
+    cursor: Option<watch::Receiver<Option<Pointer>>>,
+    shown: Option<Vec<u8>>,
     ledger: Ledger,
     ports: SessionPorts,
 }
 
 pub async fn run(socket: WebSocket, ports: SessionPorts) {
     let mut session: Session = Session {
+        phone: ports.phones.next(),
         socket,
         stream: Stream::Hidden,
         units: None,
         cursor: None,
+        shown: None,
         ledger: Ledger::default(),
         ports,
     };
@@ -52,7 +56,10 @@ pub async fn run(socket: WebSocket, ports: SessionPorts) {
     if let Err(err) = session.step(StreamInput::Visibility(false), None).await {
         eprintln!("session close: {err:#}");
     }
-    for release in input::release_buttons() {
+    for release in input::release_buttons()
+        .into_iter()
+        .chain(std::iter::once(Injection::Leave(session.phone)))
+    {
         if session.ports.input.send(release).await.is_err() {
             eprintln!("session close: input thread gone");
         }
@@ -66,10 +73,10 @@ async fn next_unit(units: &mut Option<broadcast::Receiver<Unit>>) -> Result<Unit
     }
 }
 
-async fn next_cursor(cursor: &mut Option<watch::Receiver<Option<Point>>>) -> Option<Point> {
+async fn next_cursor(cursor: &mut Option<watch::Receiver<Option<Pointer>>>) -> Option<Pointer> {
     match cursor {
         Some(cursor) => match cursor.changed().await {
-            Ok(()) => *cursor.borrow_and_update(),
+            Ok(()) => cursor.borrow_and_update().clone(),
             Err(_) => std::future::pending().await,
         },
         None => std::future::pending().await,
@@ -79,18 +86,22 @@ async fn next_cursor(cursor: &mut Option<watch::Receiver<Option<Point>>>) -> Opt
 #[derive(Clone, Debug, PartialEq)]
 enum Effect {
     TellDesk(DeskInput),
-    Inject(InputCommand),
+    Inject(Injection),
     Stream(StreamInput),
     SetView(Option<Size>),
     Acked(u32),
     Drawn(Drawn),
 }
 
-fn effects(message: PhoneMessage, at_ms: u64) -> Vec<Effect> {
+fn effects(message: PhoneMessage, at_ms: u64, phone: PhoneId) -> Vec<Effect> {
     match message {
+        PhoneMessage::Move { dx, dy, seq } => vec![
+            Effect::TellDesk(DeskInput::PhoneInput { at_ms }),
+            Effect::Inject(Injection::Move { phone, seq, dx, dy }),
+        ],
         PhoneMessage::Input(command) => vec![
             Effect::TellDesk(DeskInput::PhoneInput { at_ms }),
-            Effect::Inject(command),
+            Effect::Inject(Injection::Command(command)),
         ],
         PhoneMessage::Visible(visible) => vec![Effect::Stream(StreamInput::Visibility(visible))],
         PhoneMessage::View(size) => vec![Effect::SetView(size)],
@@ -98,6 +109,14 @@ fn effects(message: PhoneMessage, at_ms: u64) -> Vec<Effect> {
         PhoneMessage::Drawn(drawn) => vec![Effect::Drawn(drawn)],
         PhoneMessage::Key => vec![Effect::Stream(StreamInput::Missed)],
     }
+}
+
+fn pointer_message(pointer: &Pointer, phone: PhoneId) -> Vec<u8> {
+    wire::pointer_message(
+        pointer.at,
+        input::applied_seq(&pointer.applied, phone),
+        &pointer.monitor,
+    )
 }
 
 const NANOS_PER_MICRO: u64 = 1000;
@@ -135,7 +154,7 @@ impl Session {
                     Some(input) => self.step(input, received.as_ref().ok()).await?,
                     None => return Err(anyhow!("capture feed closed")),
                 },
-                Some(at) = next_cursor(&mut self.cursor) => self.send_cursor(at).await?,
+                Some(pointer) = next_cursor(&mut self.cursor) => self.send_pointer(&pointer).await?,
             }
         }
     }
@@ -143,7 +162,7 @@ impl Session {
     async fn on_text(&mut self, text: &str) -> anyhow::Result<()> {
         match wire::parse(text) {
             Ok(message) => {
-                for effect in effects(message, self.ports.clock.now_ms()) {
+                for effect in effects(message, self.ports.clock.now_ms(), self.phone) {
                     self.apply(effect).await?;
                 }
                 Ok(())
@@ -206,11 +225,12 @@ impl Session {
             StreamCommand::JoinViewers => {
                 self.units = Some(self.ports.units.subscribe());
                 self.ledger = Ledger::default();
-                let mut cursor: watch::Receiver<Option<Point>> = self.ports.cursor.subscribe();
-                let current: Option<Point> = *cursor.borrow_and_update();
+                let mut cursor: watch::Receiver<Option<Pointer>> = self.ports.cursor.subscribe();
+                let current: Option<Pointer> = cursor.borrow_and_update().clone();
                 self.cursor = Some(cursor);
-                if let Some(at) = current {
-                    self.send_cursor(at).await?;
+                self.shown = None;
+                if let Some(pointer) = current {
+                    self.send_pointer(&pointer).await?;
                 }
                 self.tell_desk(DeskInput::ViewerJoined).await
             }
@@ -241,10 +261,15 @@ impl Session {
         }
     }
 
-    async fn send_cursor(&mut self, at: Point) -> anyhow::Result<()> {
+    async fn send_pointer(&mut self, pointer: &Pointer) -> anyhow::Result<()> {
+        let message: Vec<u8> = pointer_message(pointer, self.phone);
+        if self.shown.as_ref() == Some(&message) {
+            return Ok(());
+        }
         self.socket
-            .send(Message::Binary(Bytes::from(wire::cursor_message(at))))
+            .send(Message::Binary(Bytes::from(message.clone())))
             .await?;
+        self.shown = Some(message);
         Ok(())
     }
 

@@ -1,5 +1,8 @@
+use std::collections::BTreeMap;
 use std::io;
 use std::process::Command;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -8,7 +11,7 @@ use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, InputEvent, KeyCode, KeyEvent, RelativeAxisCode, RelativeAxisEvent};
 use phonepad_core::input::{Button, InputCommand};
 use phonepad_core::keys::{Key, Stroke, Table, typing_plan};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use crate::hypr;
 use crate::keymap::{KeyboardLayout, Keymaps};
@@ -25,6 +28,44 @@ const AXES: [RelativeAxisCode; 6] = [
     RelativeAxisCode::REL_HWHEEL_HI_RES,
 ];
 const BUTTONS: [Button; 3] = [Button::Left, Button::Middle, Button::Right];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PhoneId(pub u64);
+
+#[derive(Clone, Debug, Default)]
+pub struct PhoneIds(Arc<AtomicU64>);
+
+impl PhoneIds {
+    pub fn next(&self) -> PhoneId {
+        PhoneId(self.0.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Injection {
+    Command(InputCommand),
+    Move {
+        phone: PhoneId,
+        seq: u32,
+        dx: i32,
+        dy: i32,
+    },
+    Leave(PhoneId),
+}
+
+pub type Applied = BTreeMap<PhoneId, u32>;
+
+pub fn applied_seq(applied: &Applied, phone: PhoneId) -> u32 {
+    applied.get(&phone).copied().unwrap_or(0)
+}
+
+fn mark(applied: &mut Applied, injection: &Injection) -> bool {
+    match injection {
+        Injection::Command(_) => false,
+        Injection::Move { phone, seq, .. } => applied.insert(*phone, *seq) != Some(*seq),
+        Injection::Leave(phone) => applied.remove(phone).is_some(),
+    }
+}
 
 pub fn open_device() -> io::Result<VirtualDevice> {
     let axes: AttributeSet<RelativeAxisCode> = AXES.into_iter().collect();
@@ -43,25 +84,46 @@ pub fn device_keys() -> impl Iterator<Item = KeyCode> {
         .chain(BUTTONS.map(button_code))
 }
 
-pub fn spawn(mut device: VirtualDevice) -> mpsc::Sender<InputCommand> {
-    let (sender, mut receiver): (mpsc::Sender<InputCommand>, mpsc::Receiver<InputCommand>) =
+pub fn spawn(
+    mut device: VirtualDevice,
+    applied: watch::Sender<Applied>,
+) -> mpsc::Sender<Injection> {
+    let (sender, mut receiver): (mpsc::Sender<Injection>, mpsc::Receiver<Injection>) =
         mpsc::channel(QUEUE);
     thread::spawn(move || {
         let mut keymaps: Keymaps = Keymaps::default();
-        while let Some(command) = receiver.blocking_recv() {
-            if let Err(err) = execute(&mut device, &mut keymaps, &command) {
-                eprintln!("input {command:?}: {err}");
+        while let Some(injection) = receiver.blocking_recv() {
+            if let Err(err) = inject(&mut device, &mut keymaps, &injection) {
+                eprintln!("input {injection:?}: {err}");
             }
+            applied.send_if_modified(|applied: &mut Applied| mark(applied, &injection));
         }
     });
     sender
 }
 
-pub fn release_buttons() -> [InputCommand; 3] {
-    BUTTONS.map(|button: Button| InputCommand::Button {
-        button,
-        pressed: false,
+pub fn release_buttons() -> [Injection; 3] {
+    BUTTONS.map(|button: Button| {
+        Injection::Command(InputCommand::Button {
+            button,
+            pressed: false,
+        })
     })
+}
+
+fn inject(
+    device: &mut VirtualDevice,
+    keymaps: &mut Keymaps,
+    injection: &Injection,
+) -> io::Result<()> {
+    match injection {
+        Injection::Command(command) => execute(device, keymaps, command),
+        Injection::Move { dx, dy, .. } => device.emit(&[
+            rel(RelativeAxisCode::REL_X, *dx),
+            rel(RelativeAxisCode::REL_Y, *dy),
+        ]),
+        Injection::Leave(_) => Ok(()),
+    }
 }
 
 fn execute(
@@ -70,10 +132,6 @@ fn execute(
     command: &InputCommand,
 ) -> io::Result<()> {
     match command {
-        InputCommand::Move { dx, dy } => device.emit(&[
-            rel(RelativeAxisCode::REL_X, *dx),
-            rel(RelativeAxisCode::REL_Y, *dy),
-        ]),
         InputCommand::Scroll { dx, dy } => device.emit(&[
             rel(RelativeAxisCode::REL_WHEEL_HI_RES, dy.saturating_neg()),
             rel(RelativeAxisCode::REL_HWHEEL_HI_RES, *dx),
@@ -226,19 +284,99 @@ mod tests {
         assert_eq!(
             release_buttons(),
             [
-                InputCommand::Button {
+                Injection::Command(InputCommand::Button {
                     button: Button::Left,
                     pressed: false
-                },
-                InputCommand::Button {
+                }),
+                Injection::Command(InputCommand::Button {
                     button: Button::Middle,
                     pressed: false
-                },
-                InputCommand::Button {
+                }),
+                Injection::Command(InputCommand::Button {
                     button: Button::Right,
                     pressed: false
-                },
+                }),
             ]
+        );
+    }
+
+    const PHONE: PhoneId = PhoneId(1);
+    const OTHER: PhoneId = PhoneId(2);
+
+    fn moved(phone: PhoneId, seq: u32) -> Injection {
+        Injection::Move {
+            phone,
+            seq,
+            dx: 1,
+            dy: 0,
+        }
+    }
+
+    fn marked(start: &[(PhoneId, u32)], injection: &Injection) -> (bool, Vec<(PhoneId, u32)>) {
+        let mut applied: Applied = start.iter().copied().collect();
+        let changed: bool = mark(&mut applied, injection);
+        (changed, applied.into_iter().collect())
+    }
+
+    #[test]
+    fn each_phone_gets_its_own_id() {
+        let ids: PhoneIds = PhoneIds::default();
+        assert_eq!([ids.next(), ids.next()], [PhoneId(0), PhoneId(1)]);
+    }
+
+    #[test]
+    fn a_phone_that_never_moved_has_applied_nothing() {
+        assert_eq!(applied_seq(&Applied::new(), PHONE), 0);
+    }
+
+    #[test]
+    fn a_phone_has_applied_its_own_last_move_not_another_phones() {
+        let applied: Applied = [(PHONE, 4), (OTHER, 9)].into_iter().collect();
+        assert_eq!(applied_seq(&applied, PHONE), 4);
+    }
+
+    #[test]
+    fn a_first_move_marks_its_phone() {
+        assert_eq!(marked(&[], &moved(PHONE, 1)), (true, vec![(PHONE, 1)]));
+    }
+
+    #[test]
+    fn a_later_move_replaces_its_phones_mark_and_keeps_the_others() {
+        assert_eq!(
+            marked(&[(PHONE, 1), (OTHER, 5)], &moved(PHONE, 2)),
+            (true, vec![(PHONE, 2), (OTHER, 5)])
+        );
+    }
+
+    #[test]
+    fn the_same_move_again_changes_nothing() {
+        assert_eq!(
+            marked(&[(PHONE, 2)], &moved(PHONE, 2)),
+            (false, vec![(PHONE, 2)])
+        );
+    }
+
+    #[test]
+    fn a_command_marks_nothing() {
+        assert_eq!(
+            marked(&[(PHONE, 2)], &release_buttons()[0]),
+            (false, vec![(PHONE, 2)])
+        );
+    }
+
+    #[test]
+    fn a_leaving_phone_loses_its_mark() {
+        assert_eq!(
+            marked(&[(PHONE, 2), (OTHER, 5)], &Injection::Leave(PHONE)),
+            (true, vec![(OTHER, 5)])
+        );
+    }
+
+    #[test]
+    fn a_phone_that_never_moved_leaves_without_a_change() {
+        assert_eq!(
+            marked(&[(OTHER, 5)], &Injection::Leave(PHONE)),
+            (false, vec![(OTHER, 5)])
         );
     }
 }

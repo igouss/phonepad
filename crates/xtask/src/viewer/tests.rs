@@ -63,7 +63,9 @@ fn upgraded(port: u16) -> Box<WebSocket<TcpStream>> {
     }
 }
 
-const CURSOR: [u8; 9] = [1, 0, 0, 0, 5, 0, 0, 0, 6];
+const CURSOR: [u8; 29] = [
+    1, 0, 0, 0, 5, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 10,
+];
 
 fn frame(id: u8) -> Vec<u8> {
     vec![0, 0, 0, 0, id, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0x65]

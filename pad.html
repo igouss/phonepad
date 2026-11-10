@@ -53,11 +53,11 @@ const ctx = view.getContext("2d");
 const zoombtn = document.getElementById("zoombtn");
 let zoom = 2.5;
 try { const z = parseFloat(localStorage.getItem("zoom")); if (ZOOMS.includes(z)) zoom = z; } catch (_) {}
-let ws = null;
+let ws = null, seq = 0;
 function connect() {
   ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   ws.binaryType = "arraybuffer";
-  ws.onopen = () => { status.textContent = "connected"; restart(); sendView(); sendVisible(); };
+  ws.onopen = () => { status.textContent = "connected"; seq = 0; restart(); sendView(); sendVisible(); };
   ws.onclose = () => { status.textContent = "disconnected"; setTimeout(connect, 1000); };
   ws.onmessage = ev => { if (ev.data instanceof ArrayBuffer) onMessage(ev.data); };
 }
@@ -238,7 +238,7 @@ pad.addEventListener("touchcancel", end, { passive: false });
 
 (function flush() {
   const mx = Math.trunc(acc.x), my = Math.trunc(acc.y);
-  if (mx || my) { send({ t: "move", dx: mx, dy: my }); acc.x -= mx; acc.y -= my; }
+  if (mx || my) { send({ t: "move", dx: mx, dy: my, s: ++seq }); acc.x -= mx; acc.y -= my; }
   const sx = Math.trunc(acc.sx), sy = Math.trunc(acc.sy);
   if (sx || sy) { send({ t: "scroll", dx: sx, dy: sy }); acc.sx -= sx; acc.sy -= sy; }
   requestAnimationFrame(flush);

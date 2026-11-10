@@ -597,3 +597,24 @@ fn a_rect_in_line_with_the_window_but_below_it_misses() {
 fn rects_at_the_end_of_the_coordinate_range_overlap_without_overflow() {
     assert!(rect(u32::MAX, u32::MAX, u32::MAX, u32::MAX).overlaps(rect(u32::MAX, u32::MAX, 1, 1)));
 }
+
+#[test]
+fn no_monitor_is_under_any_point() {
+    assert_eq!(monitor_under(Point { x: 0, y: 0 }, &[]), None);
+}
+
+#[test]
+fn the_monitor_holding_the_point_is_under_it() {
+    assert_eq!(
+        monitor_under(Point { x: 1920, y: 200 }, &two_monitors()).map(|m: &Monitor| &*m.name),
+        Some("B")
+    );
+}
+
+#[test]
+fn a_point_on_no_monitor_is_under_the_first() {
+    assert_eq!(
+        monitor_under(Point { x: 1920, y: 199 }, &two_monitors()).map(|m: &Monitor| &*m.name),
+        Some("A")
+    );
+}

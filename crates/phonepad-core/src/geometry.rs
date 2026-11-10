@@ -208,12 +208,15 @@ pub struct Region {
     pub size: Size,
 }
 
-pub fn region_around(cursor: Point, view: Size, monitors: &[Monitor]) -> Option<Region> {
-    let first: &Monitor = monitors.first()?;
-    let mon: &Monitor = monitors
+pub fn monitor_under(cursor: Point, monitors: &[Monitor]) -> Option<&Monitor> {
+    monitors
         .iter()
         .find(|m: &&Monitor| m.contains(cursor))
-        .unwrap_or(first);
+        .or_else(|| monitors.first())
+}
+
+pub fn region_around(cursor: Point, view: Size, monitors: &[Monitor]) -> Option<Region> {
+    let mon: &Monitor = monitor_under(cursor, monitors)?;
     let size: Size = Size {
         w: even_within(view.w, mon.size.w)?,
         h: even_within(view.h, mon.size.h)?,

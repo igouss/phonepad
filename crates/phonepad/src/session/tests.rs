@@ -2,13 +2,16 @@ use std::num::NonZeroU32;
 
 use axum::body::Bytes;
 use futures_util::{SinkExt, StreamExt};
-use phonepad_core::geometry::Size;
-use phonepad_core::input::Button;
+use phonepad_core::geometry::{Monitor, Point, Size, Transform};
+use phonepad_core::input::{Button, InputCommand};
 use phonepad_core::stream::UnitKind;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use super::*;
 use crate::capture::KeyframeRequest;
+use crate::input::Applied;
+
+const PHONE: PhoneId = PhoneId(3);
 
 fn press() -> InputCommand {
     InputCommand::Button {
@@ -20,11 +23,82 @@ fn press() -> InputCommand {
 #[test]
 fn phone_input_reaches_the_desk_before_the_device() {
     assert_eq!(
-        effects(PhoneMessage::Input(press()), 1234),
+        effects(PhoneMessage::Input(press()), 1234, PHONE),
         vec![
             Effect::TellDesk(DeskInput::PhoneInput { at_ms: 1234 }),
-            Effect::Inject(press()),
+            Effect::Inject(Injection::Command(press())),
         ]
+    );
+}
+
+#[test]
+fn a_move_is_injected_with_this_phones_id_and_its_sequence_number() {
+    assert_eq!(
+        effects(
+            PhoneMessage::Move {
+                dx: 3,
+                dy: -2,
+                seq: 7
+            },
+            1234,
+            PHONE
+        ),
+        vec![
+            Effect::TellDesk(DeskInput::PhoneInput { at_ms: 1234 }),
+            Effect::Inject(Injection::Move {
+                phone: PHONE,
+                seq: 7,
+                dx: 3,
+                dy: -2
+            }),
+        ]
+    );
+}
+
+fn screen() -> Monitor {
+    Monitor {
+        name: String::from("DP-1"),
+        origin: Point { x: 0, y: 0 },
+        size: Size {
+            w: NonZeroU32::new(2560).unwrap(),
+            h: NonZeroU32::new(1440).unwrap(),
+        },
+        pixels: Size {
+            w: NonZeroU32::new(2560).unwrap(),
+            h: NonZeroU32::new(1440).unwrap(),
+        },
+        transform: Transform::Normal,
+    }
+}
+
+fn pointer(applied: &[(PhoneId, u32)]) -> Pointer {
+    Pointer {
+        at: Point { x: 5, y: 6 },
+        applied: applied.iter().copied().collect::<Applied>(),
+        monitor: screen(),
+    }
+}
+
+fn applied_field(message: &[u8]) -> Option<u32> {
+    Some(u32::from_be_bytes(message.get(9..13)?.try_into().ok()?))
+}
+
+#[test]
+fn a_pointer_tells_this_phone_its_own_last_applied_move() {
+    assert_eq!(
+        applied_field(&pointer_message(
+            &pointer(&[(PhoneId(2), 9), (PHONE, 4)]),
+            PHONE
+        )),
+        Some(4)
+    );
+}
+
+#[test]
+fn a_pointer_tells_a_phone_that_never_moved_it_applied_nothing() {
+    assert_eq!(
+        applied_field(&pointer_message(&pointer(&[(PhoneId(2), 9)]), PHONE)),
+        Some(0)
     );
 }
 
@@ -32,8 +106,8 @@ fn phone_input_reaches_the_desk_before_the_device() {
 fn visibility_goes_to_the_stream() {
     assert_eq!(
         [
-            effects(PhoneMessage::Visible(true), 0),
-            effects(PhoneMessage::Visible(false), 0)
+            effects(PhoneMessage::Visible(true), 0, PHONE),
+            effects(PhoneMessage::Visible(false), 0, PHONE)
         ],
         [
             vec![Effect::Stream(StreamInput::Visibility(true))],
@@ -48,14 +122,17 @@ fn view_size_is_published() {
         .zip(NonZeroU32::new(1072))
         .map(|(w, h): (NonZeroU32, NonZeroU32)| Size { w, h });
     assert_eq!(
-        effects(PhoneMessage::View(size), 0),
+        effects(PhoneMessage::View(size), 0, PHONE),
         vec![Effect::SetView(size)]
     );
 }
 
 #[test]
 fn an_ack_times_its_unit_and_credits_the_stream() {
-    assert_eq!(effects(PhoneMessage::Ack(9), 0), vec![Effect::Acked(9)]);
+    assert_eq!(
+        effects(PhoneMessage::Ack(9), 0, PHONE),
+        vec![Effect::Acked(9)]
+    );
 }
 
 #[test]
@@ -67,7 +144,7 @@ fn a_drawn_report_is_timed() {
         drawn_ms: 3.0,
     };
     assert_eq!(
-        effects(PhoneMessage::Drawn(drawn), 0),
+        effects(PhoneMessage::Drawn(drawn), 0, PHONE),
         vec![Effect::Drawn(drawn)]
     );
 }
@@ -75,7 +152,7 @@ fn a_drawn_report_is_timed() {
 #[test]
 fn keyframe_request_counts_as_a_missed_unit() {
     assert_eq!(
-        effects(PhoneMessage::Key, 0),
+        effects(PhoneMessage::Key, 0, PHONE),
         vec![Effect::Stream(StreamInput::Missed)]
     );
 }
@@ -128,16 +205,17 @@ type Client =
 struct Wired {
     client: Client,
     desk: mpsc::Receiver<DeskMessage>,
-    input: mpsc::Receiver<InputCommand>,
+    input: mpsc::Receiver<Injection>,
     units: broadcast::Sender<Unit>,
     view: watch::Receiver<Option<Size>>,
+    cursor: watch::Sender<Option<Pointer>>,
 }
 
 async fn wired() -> Wired {
     let (desk, desk_rx): (mpsc::Sender<DeskMessage>, mpsc::Receiver<DeskMessage>) =
         mpsc::channel(8);
-    let (input, input_rx): (mpsc::Sender<InputCommand>, mpsc::Receiver<InputCommand>) =
-        mpsc::channel(8);
+    let (input, input_rx): (mpsc::Sender<Injection>, mpsc::Receiver<Injection>) = mpsc::channel(8);
+    let cursor: watch::Sender<Option<Pointer>> = watch::Sender::new(None);
     let (view, view_rx): (watch::Sender<Option<Size>>, watch::Receiver<Option<Size>>) =
         watch::channel(None);
     let (units, _): (broadcast::Sender<Unit>, broadcast::Receiver<Unit>) = broadcast::channel(4);
@@ -147,7 +225,8 @@ async fn wired() -> Wired {
         units: units.clone(),
         keyframe: KeyframeRequest::default(),
         view,
-        cursor: watch::Sender::new(None),
+        cursor: cursor.clone(),
+        phones: PhoneIds::default(),
         clock: Clock::start(),
         timings: false,
     };
@@ -173,6 +252,7 @@ async fn wired() -> Wired {
         input: input_rx,
         units,
         view: view_rx,
+        cursor,
     }
 }
 
@@ -190,7 +270,7 @@ async fn desk_input(desk: &mut mpsc::Receiver<DeskMessage>) -> Option<DeskInput>
     }
 }
 
-async fn injected(input: &mut mpsc::Receiver<InputCommand>) -> Option<InputCommand> {
+async fn injected(input: &mut mpsc::Receiver<Injection>) -> Option<Injection> {
     tokio::time::timeout(WAIT, input.recv())
         .await
         .ok()
@@ -210,7 +290,7 @@ async fn a_visible_phone_joins_the_viewers() {
 #[tokio::test]
 async fn a_move_is_announced_to_the_desk_then_injected() {
     let mut wired: Wired = wired().await;
-    say(&mut wired.client, r#"{"t":"move","dx":3,"dy":-2}"#).await;
+    say(&mut wired.client, r#"{"t":"move","dx":3,"dy":-2,"s":1}"#).await;
     assert_eq!(
         (
             matches!(
@@ -219,7 +299,15 @@ async fn a_move_is_announced_to_the_desk_then_injected() {
             ),
             injected(&mut wired.input).await
         ),
-        (true, Some(InputCommand::Move { dx: 3, dy: -2 }))
+        (
+            true,
+            Some(Injection::Move {
+                phone: PhoneId(0),
+                seq: 1,
+                dx: 3,
+                dy: -2
+            })
+        )
     );
 }
 
@@ -271,7 +359,7 @@ async fn a_keyframe_reaches_a_visible_phone() {
 }
 
 #[tokio::test]
-async fn a_closing_phone_leaves_and_releases_its_buttons() {
+async fn a_closing_phone_leaves_releases_its_buttons_and_forgets_its_moves() {
     let mut wired: Wired = wired().await;
     say(&mut wired.client, r#"{"t":"visible","v":true}"#).await;
     desk_input(&mut wired.desk).await;
@@ -279,14 +367,61 @@ async fn a_closing_phone_leaves_and_releases_its_buttons() {
     assert_eq!(
         (
             desk_input(&mut wired.desk).await,
-            injected(&mut wired.input).await
+            [
+                injected(&mut wired.input).await,
+                injected(&mut wired.input).await,
+                injected(&mut wired.input).await,
+                injected(&mut wired.input).await
+            ]
         ),
         (
             Some(DeskInput::ViewerLeft),
-            Some(InputCommand::Button {
-                button: Button::Left,
-                pressed: false
-            })
+            [
+                Some(Injection::Command(InputCommand::Button {
+                    button: Button::Left,
+                    pressed: false
+                })),
+                Some(Injection::Command(InputCommand::Button {
+                    button: Button::Middle,
+                    pressed: false
+                })),
+                Some(Injection::Command(InputCommand::Button {
+                    button: Button::Right,
+                    pressed: false
+                })),
+                Some(Injection::Leave(PhoneId(0)))
+            ]
         )
+    );
+}
+
+async fn binary(client: &mut Client) -> Option<Vec<u8>> {
+    match tokio::time::timeout(WAIT, client.next()).await {
+        Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(bytes)))) => {
+            Some(bytes.to_vec())
+        }
+        Ok(Some(_) | None) | Err(_) => None,
+    }
+}
+
+#[tokio::test]
+async fn a_viewing_phone_gets_each_changed_pointer_once() {
+    let mut wired: Wired = wired().await;
+    say(&mut wired.client, r#"{"t":"visible","v":true}"#).await;
+    desk_input(&mut wired.desk).await;
+    wired.cursor.send_replace(Some(pointer(&[(PhoneId(0), 1)])));
+    let first: Option<Vec<u8>> = binary(&mut wired.client).await;
+    wired
+        .cursor
+        .send_replace(Some(pointer(&[(PhoneId(0), 1), (PhoneId(9), 2)])));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    wired.cursor.send_replace(Some(pointer(&[(PhoneId(0), 2)])));
+    let second: Option<Vec<u8>> = binary(&mut wired.client).await;
+    assert_eq!(
+        (
+            first.as_deref().and_then(applied_field),
+            second.as_deref().and_then(applied_field)
+        ),
+        (Some(1), Some(2))
     );
 }
