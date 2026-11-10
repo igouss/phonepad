@@ -2,7 +2,7 @@ use std::num::NonZeroU32;
 use std::str::FromStr;
 
 use evdev::KeyCode;
-use phonepad_core::geometry::{Point, Size};
+use phonepad_core::geometry::{Point, Size, Transform};
 use phonepad_core::input::{Button, InputCommand};
 use serde::Deserialize;
 
@@ -87,8 +87,10 @@ fn tagged(tag: u8, at: Point, rest: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-pub fn frame_message(window: Point, unit: &[u8]) -> Vec<u8> {
-    tagged(FRAME_TAG, window, unit)
+pub fn frame_message(window: Point, transform: Transform, unit: &[u8]) -> Vec<u8> {
+    let mut message: Vec<u8> = tagged(FRAME_TAG, window, &[transform.wayland()]);
+    message.extend_from_slice(unit);
+    message
 }
 
 pub fn cursor_message(cursor: Point) -> Vec<u8> {
@@ -315,10 +317,14 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_is_tag_zero_and_the_window_origin_before_the_access_unit() {
+    fn a_frame_is_tag_zero_the_window_origin_and_the_transform_before_the_access_unit() {
         assert_eq!(
-            frame_message(Point { x: 1, y: -2 }, &[0, 0, 1, 0x65]),
-            vec![0, 0, 0, 0, 1, 0xFF, 0xFF, 0xFF, 0xFE, 0, 0, 1, 0x65]
+            frame_message(
+                Point { x: 1, y: -2 },
+                Transform::Flipped90,
+                &[0, 0, 1, 0x65]
+            ),
+            vec![0, 0, 0, 0, 1, 0xFF, 0xFF, 0xFF, 0xFE, 5, 0, 0, 1, 0x65]
         );
     }
 

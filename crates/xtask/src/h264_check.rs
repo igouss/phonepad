@@ -49,7 +49,7 @@ impl Stages {
         origin: (u32, u32),
         keyframe: bool,
     ) -> Result<AccessUnit, EncodeError> {
-        let cropped: Cropped = self.cropper.crop(surface, origin)?;
+        let cropped: Cropped = self.cropper.crop(surface, origin, OUTPUT)?;
         self.h264.encode(cropped, keyframe)
     }
 }
@@ -298,7 +298,7 @@ fn pipelined_rate(stages: &mut Stages, bgra: &[u8]) -> Result<f64, String> {
         queued.push_back(
             stages
                 .cropper
-                .crop(&surfaces[index % SURFACES], origin(index))
+                .crop(&surfaces[index % SURFACES], origin(index), OUTPUT)
                 .map_err(|e| e.to_string())?,
         );
         if queued.len() == PIPELINE_DEPTH
@@ -335,7 +335,7 @@ fn check_surface(report: &mut Report, stages: &mut Stages) -> Result<(), EncodeE
     );
     let outside: (u32, u32) = (SOURCE.width - OUTPUT.width + 1, 0);
     let rejected: bool = matches!(
-        stages.cropper.crop(&surface, outside),
+        stages.cropper.crop(&surface, outside, OUTPUT),
         Err(EncodeError::Crop { .. })
     );
     report.line(
@@ -345,7 +345,7 @@ fn check_surface(report: &mut Report, stages: &mut Stages) -> Result<(), EncodeE
     );
     let mut other: Stages = Stages::open()?;
     let refused: bool = matches!(
-        other.cropper.crop(&surface, (0, 0)),
+        other.cropper.crop(&surface, (0, 0), OUTPUT),
         Err(EncodeError::ForeignSurface)
     );
     report.line(

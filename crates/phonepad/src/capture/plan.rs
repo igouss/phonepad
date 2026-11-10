@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use phonepad_core::geometry::{Monitor, Point, Region, Size, window_around};
+use phonepad_core::geometry::{Crop, Monitor, Point, Region, Size, Transform, window_around};
 
 pub(super) const MIN_ENCODE_INTERVAL: Duration = Duration::from_micros(16_667);
 pub(super) const MIN_KEYFRAME_INTERVAL: Duration = Duration::from_millis(500);
@@ -17,11 +17,12 @@ pub(super) struct Shape {
     pub(super) output: String,
     pub(super) source: Pixels,
     pub(super) window: Pixels,
+    pub(super) transform: Transform,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Shot {
-    pub(super) crop: (u32, u32),
+    pub(super) crop: Crop,
     pub(super) window: Point,
 }
 
@@ -107,14 +108,12 @@ pub(super) fn target(
     Some(Target {
         shape: Shape {
             output: window.output.clone(),
-            source: pixels(monitor.size),
-            window: pixels(window.size),
+            source: pixels(monitor.pixels),
+            window: pixels(monitor.transform.oriented(window.size)),
+            transform: monitor.transform,
         },
         shot: Shot {
-            crop: (
-                u32::try_from(window.local.x).ok()?,
-                u32::try_from(window.local.y).ok()?,
-            ),
+            crop: monitor.buffer_crop(window.local, window.size)?,
             window: window.global,
         },
         window,

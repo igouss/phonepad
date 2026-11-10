@@ -5,13 +5,32 @@ use phonepad_core::geometry::Transform;
 use super::*;
 
 const HERE: Shot = Shot {
-    crop: (100, 200),
+    crop: Crop {
+        x: 100,
+        y: 200,
+        w: NonZeroU32::new(640).unwrap(),
+        h: NonZeroU32::new(480).unwrap(),
+    },
     window: Point { x: 100, y: 200 },
 };
 const THERE: Shot = Shot {
-    crop: (102, 200),
+    crop: Crop {
+        x: 102,
+        y: 200,
+        w: NonZeroU32::new(640).unwrap(),
+        h: NonZeroU32::new(480).unwrap(),
+    },
     window: Point { x: 102, y: 200 },
 };
+
+fn crop(x: u32, y: u32, w: u32, h: u32) -> Crop {
+    Crop {
+        x,
+        y,
+        w: NonZeroU32::new(w).unwrap(),
+        h: NonZeroU32::new(h).unwrap(),
+    }
+}
 const QUIET: Pending = Pending {
     new_frame: false,
     keyframe: false,
@@ -99,9 +118,10 @@ fn target_on_one_monitor_crops_a_window_around_the_cursor() {
                     width: 960,
                     height: 720
                 },
+                transform: Transform::Normal,
             },
             shot: Shot {
-                crop: (520, 140),
+                crop: crop(520, 140, 960, 720),
                 window: Point { x: 520, y: 140 },
             },
             window: window("A", (520, 140), (520, 140)),
@@ -129,13 +149,46 @@ fn target_on_the_second_of_many_monitors_uses_its_source_and_local_crop() {
                     width: 960,
                     height: 720
                 },
+                transform: Transform::Normal,
             },
             shot: Shot {
-                crop: (600, 140),
+                crop: crop(600, 140, 960, 720),
                 window: Point { x: 2520, y: 140 },
             },
             window: window("B", (2520, 140), (600, 140)),
         })
+    );
+}
+
+#[test]
+fn a_scaled_rotated_monitor_encodes_the_window_in_panel_order_from_its_pixels() {
+    let rotated: Monitor =
+        Monitor::from_mode("R".to_owned(), Point { x: 0, y: 0 }, 3000, 2000, 1.5, 1).unwrap();
+    let target: Option<Target> = target(
+        Point { x: 600, y: 1000 },
+        size(400, 200),
+        std::slice::from_ref(&rotated),
+        None,
+    );
+    assert_eq!(
+        target.map(|t: Target| (
+            t.shape.source,
+            t.shape.window,
+            t.shape.transform,
+            t.shot.crop
+        )),
+        Some((
+            Pixels {
+                width: 3000,
+                height: 2000
+            },
+            Pixels {
+                width: 300,
+                height: 600
+            },
+            Transform::Rotate90,
+            crop(1275, 650, 450, 900)
+        ))
     );
 }
 
@@ -151,7 +204,7 @@ fn a_pointer_moving_inside_the_kept_window_keeps_the_shot() {
         )
         .map(|t: Target| t.shot),
         Some(Shot {
-            crop: (520, 140),
+            crop: crop(520, 140, 960, 720),
             window: Point { x: 520, y: 140 },
         })
     );

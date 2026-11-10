@@ -404,10 +404,18 @@ impl State {
             Schedule::EncodeNow => {
                 let cropped: Cropped = pool
                     .cropper
-                    .crop(&pool.surfaces[held].surface, wanted.crop)
+                    .crop(
+                        &pool.surfaces[held].surface,
+                        (wanted.crop.x, wanted.crop.y),
+                        phonepad_h264::Size {
+                            width: wanted.crop.w.get(),
+                            height: wanted.crop.h.get(),
+                        },
+                    )
                     .context("crop")?;
                 pool.lane.submit(Job {
                     cropped,
+                    transform: pool.shape.transform,
                     keyframe: pending.keyframe && self.keyframe.take(),
                     shot: wanted,
                 })?;

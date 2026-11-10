@@ -129,7 +129,6 @@ pub struct AccessUnit {
 pub struct Cropper {
     id: u64,
     source: Size,
-    output: Size,
     frames: ffi::HwFrames,
     graph: filter::Graph,
 }
@@ -222,7 +221,6 @@ pub fn open(
         Cropper {
             id: NEXT_ENCODER.fetch_add(1, Ordering::Relaxed),
             source,
-            output,
             frames,
             graph,
         },
@@ -256,11 +254,12 @@ impl Cropper {
         &mut self,
         surface: &Arc<CaptureSurface>,
         crop_origin: (u32, u32),
+        crop_size: Size,
     ) -> Result<Cropped, EncodeError> {
         if surface.encoder != self.id {
             return Err(EncodeError::ForeignSurface);
         }
-        let crop: ffi::Crop = crop_edges(self.source, self.output, crop_origin)?;
+        let crop: ffi::Crop = crop_edges(self.source, crop_size, crop_origin)?;
         let mut source: filter::Context = self
             .graph
             .get("in")

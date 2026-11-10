@@ -6,6 +6,7 @@ use std::thread::{self, JoinHandle};
 
 use anyhow::{Context, anyhow};
 use axum::body::Bytes;
+use phonepad_core::geometry::Transform;
 use phonepad_core::stream::UnitKind;
 use phonepad_h264::{AccessUnit, Cropped, H264};
 use rustix::event::{EventfdFlags, eventfd};
@@ -21,6 +22,7 @@ pub(super) const DEPTH: usize = 6;
 
 pub(super) struct Job {
     pub(super) cropped: Cropped,
+    pub(super) transform: Transform,
     pub(super) keyframe: bool,
     pub(super) shot: Shot,
 }
@@ -109,7 +111,11 @@ fn encode_all(
         } else {
             UnitKind::Delta
         };
-        let message: Bytes = Bytes::from(wire::frame_message(job.shot.window, &unit.data));
+        let message: Bytes = Bytes::from(wire::frame_message(
+            job.shot.window,
+            job.transform,
+            &unit.data,
+        ));
         let _no_viewer_subscribed: Result<usize, broadcast::error::SendError<Unit>> =
             units.send(Unit { kind, message });
     }

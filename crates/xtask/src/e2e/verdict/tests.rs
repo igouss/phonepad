@@ -1,6 +1,6 @@
 use super::{
-    CURSOR_TAG, Decoded, FRAME_TAG, HEADER, Shutdown, Tally, distinct, executable, frame_hashes,
-    instance, listening, shutdown_check, spawned, status_check, tally, viewer_checks,
+    CURSOR_TAG, Decoded, FRAME_HEADER, FRAME_TAG, HEADER, Shutdown, Tally, distinct, executable,
+    frame_hashes, instance, listening, shutdown_check, spawned, status_check, tally, viewer_checks,
 };
 use crate::report::Check;
 use std::ffi::OsStr;
@@ -14,7 +14,7 @@ const LIMIT: Duration = Duration::from_secs(5);
 fn message(unit: &[u8]) -> Vec<u8> {
     [FRAME_TAG]
         .iter()
-        .chain(&[0u8; HEADER - 1])
+        .chain(&[0u8; FRAME_HEADER - 1])
         .chain(unit)
         .copied()
         .collect()
