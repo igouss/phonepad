@@ -1,4 +1,4 @@
-use std::os::unix::fs::{PermissionsExt, symlink};
+use std::os::unix::fs::symlink;
 
 use super::*;
 
@@ -248,7 +248,6 @@ fn unavailability_is_logged_once() {
 fn an_unreadable_marker_is_an_error_not_absent() {
     let rig: Rig = Rig::new("unreadable");
     std::fs::create_dir_all(rig.marker.parent().unwrap()).unwrap();
-    std::fs::write(&rig.marker, b"1\n").unwrap();
-    std::fs::set_permissions(&rig.marker, std::fs::Permissions::from_mode(0o000)).unwrap();
+    symlink(&rig.marker, &rig.marker).unwrap();
     assert!(probe(&rig.marker).is_err());
 }
