@@ -1,7 +1,7 @@
 use std::thread;
 
 use anyhow::{Context, anyhow};
-use phonepad_core::desk::{DeskInput, PHONE_QUIET_MS};
+use phonepad_core::desk::DeskInput;
 use tokio::sync::mpsc;
 use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::protocol::wl_seat::{self, WlSeat};
@@ -14,6 +14,8 @@ use wayland_protocols::ext::idle_notify::v1::client::ext_idle_notifier_v1::{
 };
 
 use crate::clock::Clock;
+
+const INPUT_IDLE_MS: u32 = 50;
 use crate::desk::DeskMessage;
 
 const INPUT_IDLE_VERSION: u32 = 2;
@@ -54,8 +56,7 @@ fn watch(desk: mpsc::Sender<DeskMessage>, clock: Clock) -> anyhow::Result<()> {
         .as_ref()
         .ok_or_else(|| anyhow!("no ext_idle_notifier_v1 version {INPUT_IDLE_VERSION}"))?;
     let seat: &WlSeat = state.seat.as_ref().ok_or_else(|| anyhow!("no wl_seat"))?;
-    let timeout: u32 = u32::try_from(PHONE_QUIET_MS).context("idle timeout")?;
-    notifier.get_input_idle_notification(timeout, seat, &qh, ());
+    notifier.get_input_idle_notification(INPUT_IDLE_MS, seat, &qh, ());
     while !state.desk_gone {
         queue
             .blocking_dispatch(&mut state)
