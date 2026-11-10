@@ -8,6 +8,7 @@ use std::process::{Command, Output};
 
 pub const CORE: &str = "phonepad-core";
 pub const HTML_FILES: [&str; 1] = ["pad.html"];
+const PAGE_TESTS: &str = ".test.js";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Verdict {
@@ -32,6 +33,7 @@ pub fn all(root: &Path) -> Vec<(&'static str, Verdict)> {
             core_has_no_dependencies(root).into(),
         ),
         ("no-comments", no_comments(root).into()),
+        ("page-tests", page_tests(root).into()),
         ("views-fresh", views_fresh(root).into()),
     ]
 }
@@ -82,6 +84,7 @@ fn tracked_files(root: &Path) -> Result<Vec<String>, String> {
 enum Language {
     Rust,
     Html,
+    Javascript,
 }
 
 fn language(path: &str) -> Option<Language> {
@@ -89,6 +92,8 @@ fn language(path: &str) -> Option<Language> {
         Some(Language::Rust)
     } else if HTML_FILES.contains(&path) {
         Some(Language::Html)
+    } else if path.ends_with(".js") {
+        Some(Language::Javascript)
     } else {
         None
     }
@@ -101,6 +106,7 @@ fn comment_findings(path: &str, language: Language, source: &str) -> Vec<String>
             ambiguous_slashes: Vec::new(),
         },
         Language::Html => lexer::html(source),
+        Language::Javascript => lexer::javascript(source),
     };
     let mut findings: Vec<String> = scan
         .comments
@@ -129,6 +135,41 @@ fn no_comments(root: &Path) -> Result<Vec<String>, String> {
         findings.extend(comment_findings(&path, language, &source));
     }
     Ok(findings)
+}
+
+fn page_tests(root: &Path) -> Result<Vec<String>, String> {
+    let tests: Vec<String> = tracked_files(root)?
+        .into_iter()
+        .filter(|path: &String| path.ends_with(PAGE_TESTS))
+        .collect();
+    if tests.is_empty() {
+        return Ok(vec![format!("no page tests (*{PAGE_TESTS}) are tracked")]);
+    }
+    let output: Output = Command::new("node")
+        .args(["--test", "--test-reporter=tap"])
+        .args(&tests)
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("cannot run node: {e}"))?;
+    Ok(test_failures(
+        output.status.success(),
+        &String::from_utf8_lossy(&output.stdout),
+        &String::from_utf8_lossy(&output.stderr),
+    ))
+}
+
+fn test_failures(passed: bool, tap: &str, stderr: &str) -> Vec<String> {
+    let failed: Vec<String> = tap
+        .lines()
+        .map(str::trim_start)
+        .filter(|line: &&str| line.starts_with("not ok"))
+        .map(str::to_string)
+        .collect();
+    match (passed, failed.is_empty()) {
+        (true, true) => Vec::new(),
+        (true | false, false) => failed,
+        (false, true) => vec![format!("node --test failed: {}", stderr.trim())],
+    }
 }
 
 fn views_fresh(root: &Path) -> Result<Vec<String>, String> {
@@ -229,7 +270,7 @@ fn stale_views(fresh: &Files, committed: &Files) -> Vec<String> {
 mod tests {
     use super::{
         Language, Verdict, comment_findings, core_findings, declares_machine, language,
-        stale_views, unwired_machines,
+        stale_views, test_failures, unwired_machines,
     };
     use crate::views::Files;
     use crate::workspace::{Member, Package, Workspace};
@@ -288,15 +329,16 @@ mod tests {
     }
 
     #[test]
-    fn only_rust_files_and_the_phone_page_are_scanned() {
+    fn only_rust_javascript_and_the_phone_page_are_scanned() {
         assert_eq!(
             (
                 language("a/b.rs").is_some(),
                 language("pad.html").is_some(),
                 language("x/pad.html").is_some(),
+                language("pointer.js").is_some(),
                 language("server.py").is_some()
             ),
-            (true, true, false, false)
+            (true, true, false, true, false)
         );
     }
 
@@ -319,6 +361,46 @@ mod tests {
             vec![String::from(
                 "pad.html:3 `/` could start a regex or be a division; the lexer cannot classify it"
             )]
+        );
+    }
+
+    #[test]
+    fn javascript_findings_use_the_javascript_lexer() {
+        assert_eq!(
+            comment_findings("pointer.js", Language::Javascript, "let a;\n// b\n"),
+            vec![String::from("pointer.js:2")]
+        );
+    }
+
+    #[test]
+    fn passing_tests_have_no_failures() {
+        assert_eq!(
+            test_failures(true, "ok 1 - a\nok 2 - b\n", ""),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn each_failing_test_is_a_failure() {
+        assert_eq!(
+            test_failures(false, "not ok 1 - a\nok 2 - b\n    not ok 3 - c\n", "x"),
+            vec![String::from("not ok 1 - a"), String::from("not ok 3 - c")]
+        );
+    }
+
+    #[test]
+    fn a_failed_run_without_failing_tests_reports_its_error() {
+        assert_eq!(
+            test_failures(false, "", " SyntaxError: x \n"),
+            vec![String::from("node --test failed: SyntaxError: x")]
+        );
+    }
+
+    #[test]
+    fn a_not_ok_line_fails_even_when_node_exits_zero() {
+        assert_eq!(
+            test_failures(true, "not ok 1 - a\n", ""),
+            vec![String::from("not ok 1 - a")]
         );
     }
 

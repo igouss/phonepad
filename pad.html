@@ -42,8 +42,9 @@
   <button data-key="KEY_BACKSPACE">⌫</button><button data-key="KEY_ENTER">⏎</button>
 </div>
 <input id="kbd" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+<script src="/pointer.js"></script>
 <script>
-const SENS = 1.6, ACCEL = 0.06, SCROLL = 6, TAP_MS = 180, TAP_PX = 8;
+const SCROLL = 6, TAP_MS = 180, TAP_PX = 8;
 const ZOOMS = [1.5, 2.5, 4];
 const status = document.getElementById("status");
 const pad = document.getElementById("pad");
@@ -87,7 +88,6 @@ function nals(b) {
 const shot = document.createElement("canvas");
 const shotCtx = shot.getContext("2d");
 let win = null, cur = null, painting = false, fresh = null;
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(v, hi));
 const ORIENT = [
   (w, h) => [1, 0, 0, 1, 0, 0], (w, h) => [0, 1, -1, 0, h, 0], (w, h) => [-1, 0, 0, -1, w, h], (w, h) => [0, -1, 1, 0, 0, w],
   (w, h) => [-1, 0, 0, 1, w, 0], (w, h) => [0, 1, 1, 0, 0, 0], (w, h) => [1, 0, 0, -1, 0, h], (w, h) => [0, -1, -1, 0, h, w],
@@ -96,9 +96,7 @@ function paint() {
   painting = false;
   if (!win || !cur) return;
   const W = view.width, H = view.height, r = pad.getBoundingClientRect();
-  const vw = Math.min(Math.round(r.width * zoom), win.w), vh = Math.min(Math.round(r.height * zoom), win.h);
-  const vx = clamp(cur.x - Math.floor(vw / 2), win.x, win.x + win.w - vw);
-  const vy = clamp(cur.y - Math.floor(vh / 2), win.y, win.y + win.h - vh);
+  const { x: vx, y: vy, w: vw, h: vh } = Pointer.place(cur, { w: Math.round(r.width * zoom), h: Math.round(r.height * zoom) }, win);
   const s = Math.min(W / vw, H / vh);
   const ox = (W - vw * s) / 2, oy = (H - vh * s) / 2;
   ctx.fillStyle = "#1b1b1b"; ctx.fillRect(0, 0, W, H);
@@ -220,7 +218,7 @@ pad.addEventListener("touchmove", ev => {
   dx /= n; dy /= n;
   gesture.moved += Math.hypot(dx, dy);
   if (touches.size >= 2) { acc.sx += dx * SCROLL; acc.sy += dy * SCROLL; }
-  else { const f = SENS * (1 + ACCEL * Math.hypot(dx, dy)); acc.x += dx * f; acc.y += dy * f; }
+  else { const a = Pointer.accelerate(dx, dy); acc.x += a.x; acc.y += a.y; }
 }, { passive: false });
 function end(ev) {
   ev.preventDefault();

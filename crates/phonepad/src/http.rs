@@ -19,11 +19,16 @@ struct Asset {
     body: &'static [u8],
 }
 
-const ASSETS: [Asset; 4] = [
+const ASSETS: [Asset; 5] = [
     Asset {
         path: "/",
         content_type: "text/html; charset=utf-8",
         body: include_bytes!("../../../pad.html"),
+    },
+    Asset {
+        path: "/pointer.js",
+        content_type: "text/javascript; charset=utf-8",
+        body: include_bytes!("../../../pointer.js"),
     },
     Asset {
         path: "/manifest.webmanifest",
@@ -260,6 +265,22 @@ mod tests {
     #[tokio::test]
     async fn page_is_html() {
         assert_eq!(served("/").await, ok("text/html; charset=utf-8"));
+    }
+
+    #[tokio::test]
+    async fn pointer_script_is_javascript() {
+        assert_eq!(
+            served("/pointer.js").await,
+            ok("text/javascript; charset=utf-8")
+        );
+    }
+
+    #[tokio::test]
+    async fn pointer_script_without_login_is_forbidden() {
+        assert_eq!(
+            get_path("/pointer.js", None).await.status,
+            StatusCode::FORBIDDEN
+        );
     }
 
     #[tokio::test]

@@ -222,6 +222,15 @@ pub fn html(src: &str) -> Scan {
     }
 }
 
+pub fn javascript(src: &str) -> Scan {
+    let mut s: Scanner = Scanner::new(src);
+    js(&mut s, false);
+    Scan {
+        comments: s.hits,
+        ambiguous_slashes: s.ambiguous,
+    }
+}
+
 fn html_tag_rest(s: &mut Scanner) {
     while let Some(c) = s.at(0) {
         if c == '"' || c == '\'' {
@@ -410,7 +419,7 @@ fn template(s: &mut Scanner) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Scan, html, rust};
+    use super::{Scan, html, javascript, rust};
 
     fn comments(src: &str) -> Vec<usize> {
         html(src).comments
@@ -482,6 +491,30 @@ mod tests {
     #[test]
     fn rust_inner_attribute_on_line_one_is_not_a_shebang() {
         assert_eq!(rust("#![allow(dead_code)] // hit\n"), vec![1]);
+    }
+
+    #[test]
+    fn javascript_without_comments_has_no_hits() {
+        assert_eq!(
+            javascript("const a = \"// no\", b = 4 / 2;\n"),
+            Scan {
+                comments: Vec::new(),
+                ambiguous_slashes: Vec::new()
+            }
+        );
+    }
+
+    #[test]
+    fn javascript_reports_line_and_block_comments() {
+        assert_eq!(
+            javascript("let a = 1;\n// one\n/* two */ let b = 2;\n").comments,
+            vec![2, 3]
+        );
+    }
+
+    #[test]
+    fn javascript_reports_an_ambiguous_slash() {
+        assert_eq!(javascript("a++\n/ 2;\n").ambiguous_slashes, vec![2]);
     }
 
     #[test]
