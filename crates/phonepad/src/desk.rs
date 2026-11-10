@@ -72,7 +72,10 @@ impl DeskShell {
                 DeskMessage::Input(input) => self.step(input).await,
                 DeskMessage::CaptureExited(generation) => self.capture_exited(generation).await,
                 DeskMessage::RestartCapture => self.restart_capture(),
-                DeskMessage::WallpaperTick => self.wallpaper.tick().await,
+                DeskMessage::WallpaperTick if self.wallpaper_watch.is_some() => {
+                    self.wallpaper.tick().await
+                }
+                DeskMessage::WallpaperTick => {}
                 DeskMessage::Shutdown(done) => {
                     self.shutdown().await;
                     let _ = done.send(());

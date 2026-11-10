@@ -212,6 +212,17 @@ async fn an_unreachable_owe_changes_nothing() {
 }
 
 #[tokio::test]
+async fn a_tick_after_owe_came_back_starts_the_pause_it_missed() {
+    let rig: Rig = Rig::new("came-back");
+    let mut shell: WallpaperShell = rig.shell(Wallpaper::Idle);
+    shell.owe = rig.dir.join("missing").to_string_lossy().into_owned();
+    shell.capture_started().await;
+    shell.owe = rig.dir.join("owe").to_string_lossy().into_owned();
+    shell.tick().await;
+    assert_eq!((shell.state, rig.paused()), (Wallpaper::Held, true));
+}
+
+#[tokio::test]
 async fn no_runtime_dir_leaves_the_wallpaper_alone() {
     let rig: Rig = Rig::new("no-runtime");
     let mut shell: WallpaperShell = rig.shell(Wallpaper::Idle);

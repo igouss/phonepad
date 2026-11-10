@@ -40,12 +40,12 @@ const SHUTDOWN_BOUND: Duration = Duration::from_secs(3);
 fn main() -> anyhow::Result<()> {
     let runtime: Runtime = runtime::Builder::new_multi_thread().enable_all().build()?;
     let served: anyhow::Result<()> = runtime.block_on(serve());
-    finish(runtime);
+    finish(runtime, SHUTDOWN_BOUND);
     served
 }
 
-fn finish(runtime: Runtime) {
-    runtime.shutdown_timeout(SHUTDOWN_BOUND);
+fn finish(runtime: Runtime, bound: Duration) {
+    runtime.shutdown_timeout(bound);
 }
 
 async fn serve() -> anyhow::Result<()> {
@@ -135,7 +135,7 @@ mod tests {
         let (_keep, stuck): (mpsc::Sender<()>, mpsc::Receiver<()>) = mpsc::channel();
         runtime.spawn_blocking(move || stuck.recv());
         let started: Instant = Instant::now();
-        finish(runtime);
-        assert!(started.elapsed() < SHUTDOWN_BOUND + Duration::from_secs(1));
+        finish(runtime, Duration::from_millis(100));
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 }

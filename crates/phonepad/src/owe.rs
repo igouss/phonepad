@@ -53,9 +53,16 @@ impl WallpaperShell {
     }
 
     pub async fn tick(&mut self) {
-        match self.observe().await {
-            Ok(observation) => self.step(WallpaperInput::Observed(observation)).await,
-            Err(err) => self.unavailable(&err),
+        match (self.observe().await, self.state) {
+            (Ok(observation), Wallpaper::Idle) => {
+                self.step(WallpaperInput::CaptureStarted(observation)).await
+            }
+            (Ok(observation), Wallpaper::Yielded | Wallpaper::Held) => {
+                self.step(WallpaperInput::Observed(observation)).await
+            }
+            (Err(err), Wallpaper::Idle | Wallpaper::Yielded | Wallpaper::Held) => {
+                self.unavailable(&err)
+            }
         }
     }
 
