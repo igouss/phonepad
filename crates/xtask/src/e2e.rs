@@ -26,7 +26,10 @@ const LISTEN_TIMEOUT: Duration = Duration::from_secs(30);
 const SHUTDOWN_LIMIT: Duration = Duration::from_secs(5);
 const SHUTDOWN_PATIENCE: Duration = Duration::from_secs(20);
 const EXIT_POLL: Duration = Duration::from_millis(5);
+const STREAMING_BEFORE_SIGTERM: Duration = Duration::from_secs(1);
 const STUB_OWE: &str = "#!/bin/sh\ncase \"$1\" in status) echo '{\"status\":\"ok\",\"paused\":false,\"manual_pause\":false}';; esac\nexit 0\n";
+
+type Viewing = JoinHandle<Result<Received, String>>;
 
 struct Scratch {
     dir: PathBuf,
@@ -340,9 +343,9 @@ fn refused(login: Option<&str>) -> Result<u16, String> {
     }
 }
 
-fn watch() -> Result<Received, String> {
+fn watch(watched: Duration) -> Result<Received, String> {
     match client::handshake(PORT, Some(LOGIN))? {
-        Handshake::Upgraded(socket) => client::watch(socket, VIEW, WATCHED),
+        Handshake::Upgraded(socket) => client::watch(socket, VIEW, watched),
         Handshake::Refused(status) => Err(format!("handshake refused with HTTP {status}")),
     }
 }
@@ -370,8 +373,9 @@ fn decode(stream: &Path) -> Result<Decoded, String> {
 
 fn session(report: &mut Report, scratch: &Scratch, viewers: usize) -> Result<(), String> {
     let results: Vec<Result<Received, String>> = thread::scope(|scope| {
-        let handles: Vec<ScopedJoinHandle<Result<Received, String>>> =
-            (0..viewers).map(|_| scope.spawn(watch)).collect();
+        let handles: Vec<ScopedJoinHandle<Result<Received, String>>> = (0..viewers)
+            .map(|_| scope.spawn(|| watch(WATCHED)))
+            .collect();
         handles
             .into_iter()
             .map(|handle: ScopedJoinHandle<Result<Received, String>>| {
@@ -441,17 +445,30 @@ fn checks(report: &mut Report, bin: Option<PathBuf>) -> Result<(), String> {
         return Ok(());
     }
     let mut instance: Instance = Instance::spawn(&bin, &runtime, &path)?;
-    let served: Result<(), String> = match instance.listen() {
+    let (served, streaming): (Result<(), String>, Option<Viewing>) = match instance.listen() {
         Ok(after) => {
             report.line("listening", true, format!("listen line after {after:?}"));
-            served(report, &scratch, &mut instance)
+            let served: Result<(), String> = served(report, &scratch, &mut instance);
+            let streaming: Viewing = thread::spawn(|| watch(SHUTDOWN_PATIENCE + WATCHED));
+            thread::sleep(STREAMING_BEFORE_SIGTERM);
+            (served, Some(streaming))
         }
         Err(error) => {
             report.line("listening", false, error);
-            Ok(())
+            (Ok(()), None)
         }
     };
     let shutdown: Result<Shutdown, String> = instance.stop();
+    if let Some(streaming) = streaming {
+        let outcome: String = match streaming.join() {
+            Ok(Ok(received)) => {
+                format!("{} messages, then the watch ran out", received.binary.len())
+            }
+            Ok(Err(error)) => error,
+            Err(_) => String::from("viewer thread panicked"),
+        };
+        println!("INFO viewer streaming during SIGTERM: {outcome}");
+    }
     instance
         .stderr()
         .iter()
