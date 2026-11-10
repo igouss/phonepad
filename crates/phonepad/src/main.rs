@@ -6,6 +6,7 @@ mod http;
 mod hypr;
 mod input;
 mod keymap;
+mod marks;
 mod owe;
 mod session;
 mod timing;
@@ -29,7 +30,8 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use crate::capture::{Feed, KeyframeRequest, Pointer, Unit};
 use crate::clock::Clock;
 use crate::desk::{DeskMessage, PointerStyle};
-use crate::input::{Applied, Injection, PhoneIds};
+use crate::input::Injection;
+use crate::marks::{Marks, PhoneIds};
 use crate::session::SessionPorts;
 
 const BIG_POINTER: u32 = 64;
@@ -58,11 +60,10 @@ async fn serve() -> anyhow::Result<()> {
     let port: u16 = port.parse().context("port")?;
 
     let clock: Clock = Clock::start();
-    let (applied, applied_watch): (watch::Sender<Applied>, watch::Receiver<Applied>) =
-        watch::channel(Applied::new());
+    let marks: Arc<Marks> = Arc::new(Marks::default());
     let input: mpsc::Sender<Injection> = input::spawn(
         input::open_device().context("create uinput device")?,
-        applied,
+        Arc::clone(&marks),
     );
     let (view, view_watch): (watch::Sender<Option<Size>>, watch::Receiver<Option<Size>>) =
         watch::channel(None);
@@ -75,7 +76,7 @@ async fn serve() -> anyhow::Result<()> {
             .map_or_else(|| PathBuf::from(DEFAULT_RENDER_NODE), PathBuf::from),
         view: view_watch,
         cursor: cursor.clone(),
-        applied: applied_watch,
+        marks,
         units: units.clone(),
         keyframe: keyframe.clone(),
     };

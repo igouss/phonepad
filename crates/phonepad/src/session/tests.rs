@@ -9,7 +9,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use super::*;
 use crate::capture::KeyframeRequest;
-use crate::input::Applied;
+use crate::marks::Applied;
 
 const PHONE: PhoneId = PhoneId(3);
 

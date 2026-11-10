@@ -25,7 +25,7 @@ use wayland_protocols::ext::image_copy_capture::v1::client::ext_image_copy_captu
 use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1;
 
 use crate::hypr;
-use crate::input::Applied;
+use crate::marks::Marks;
 
 mod dispatch;
 mod pool;
@@ -54,7 +54,7 @@ struct State {
     outputs: Vec<NamedOutput>,
     view: watch::Receiver<Option<Size>>,
     sampler: Sampler,
-    applied: watch::Receiver<Applied>,
+    marks: Arc<Marks>,
     cursor: watch::Sender<Option<Pointer>>,
     units: broadcast::Sender<Unit>,
     keyframe: KeyframeRequest,
@@ -78,7 +78,7 @@ pub(super) fn run(stop: &AtomicBool, feed: Feed) -> anyhow::Result<()> {
         outputs: Vec::new(),
         view: feed.view,
         sampler: Sampler::new(Instant::now()),
-        applied: feed.applied,
+        marks: feed.marks,
         cursor: feed.cursor,
         units: feed.units,
         keyframe: feed.keyframe,
@@ -204,7 +204,7 @@ impl State {
     }
 
     fn refresh_target(&mut self) -> anyhow::Result<()> {
-        let moved: bool = self.sampler.sample_if_due(Instant::now(), &self.applied);
+        let moved: bool = self.sampler.sample_if_due(Instant::now(), &self.marks);
         let changed: bool = self.view.has_changed().unwrap_or(false) || moved;
         if !changed && self.target.is_some() {
             return Ok(());

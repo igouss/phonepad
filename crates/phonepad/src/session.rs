@@ -11,7 +11,8 @@ use tokio::sync::{broadcast, mpsc, watch};
 use crate::capture::{KeyframeRequest, Pointer, Unit};
 use crate::clock::{self, Clock};
 use crate::desk::DeskMessage;
-use crate::input::{self, Injection, PhoneId, PhoneIds};
+use crate::input::{self, Injection};
+use crate::marks::{self, PhoneId, PhoneIds};
 use crate::timing::{Drawn, Ledger, Record, Sent};
 use crate::wire::{self, PhoneMessage};
 
@@ -114,7 +115,7 @@ fn effects(message: PhoneMessage, at_ms: u64, phone: PhoneId) -> Vec<Effect> {
 fn pointer_message(pointer: &Pointer, phone: PhoneId) -> Vec<u8> {
     wire::pointer_message(
         pointer.at,
-        input::applied_seq(&pointer.applied, phone),
+        marks::applied_seq(&pointer.applied, phone),
         &pointer.monitor,
     )
 }

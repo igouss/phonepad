@@ -99,7 +99,8 @@ mod tests {
     use crate::capture::{KeyframeRequest, Unit};
     use crate::clock::Clock;
     use crate::desk::DeskMessage;
-    use crate::input::{Injection, PhoneIds};
+    use crate::input::Injection;
+    use crate::marks::PhoneIds;
 
     const LOGIN: &str = "owner@example.com";
 

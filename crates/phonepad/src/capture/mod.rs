@@ -14,7 +14,7 @@ use phonepad_core::stream::UnitKind;
 use tokio::sync::{broadcast, watch};
 
 use self::screencopy::run;
-use crate::input::Applied;
+use crate::marks::{Applied, Marks};
 
 #[derive(Clone, Debug)]
 pub struct Unit {
@@ -53,7 +53,7 @@ pub struct Feed {
     pub render_node: PathBuf,
     pub view: watch::Receiver<Option<Size>>,
     pub cursor: watch::Sender<Option<Pointer>>,
-    pub applied: watch::Receiver<Applied>,
+    pub marks: Arc<Marks>,
     pub units: broadcast::Sender<Unit>,
     pub keyframe: KeyframeRequest,
 }

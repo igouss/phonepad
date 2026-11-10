@@ -1,10 +1,9 @@
 use std::time::{Duration, Instant};
 
 use phonepad_core::geometry::Point;
-use tokio::sync::watch;
 
 use crate::hypr;
-use crate::input::Applied;
+use crate::marks::{Applied, Marks};
 
 const CURSOR_SAMPLE_MOVING: Duration = Duration::from_micros(16_667);
 const CURSOR_SAMPLE_STILL: Duration = Duration::from_millis(50);
@@ -56,16 +55,21 @@ impl Sampler {
         until_due(self.sampled_at, self.moved_at, now)
     }
 
-    pub(super) fn sample_if_due(
-        &mut self,
-        now: Instant,
-        applied: &watch::Receiver<Applied>,
-    ) -> bool {
+    pub(super) fn sample_if_due(&mut self, now: Instant, marks: &Marks) -> bool {
         if !self.until_due(now).is_zero() {
             return false;
         }
-        let before: Applied = applied.borrow().clone();
-        self.record(now, before, hypr::cursor())
+        self.take(now, marks.read(hypr::cursor))
+    }
+
+    fn take(&mut self, now: Instant, read: Option<(Applied, anyhow::Result<Point>)>) -> bool {
+        match read {
+            Some((applied, reading)) => self.record(now, applied, reading),
+            None => {
+                self.sampled_at = Some(now);
+                false
+            }
+        }
     }
 
     fn record(&mut self, now: Instant, applied: Applied, reading: anyhow::Result<Point>) -> bool {
@@ -95,7 +99,7 @@ impl Sampler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::PhoneId;
+    use crate::marks::PhoneId;
 
     #[test]
     fn cursor_that_just_moved_is_sampled_at_frame_rate() {
@@ -166,6 +170,41 @@ mod tests {
                 sampler.until_due(now + CURSOR_SETTLE)
             ),
             (true, Some(after(1, 4)), CURSOR_SAMPLE_MOVING)
+        );
+    }
+
+    #[test]
+    fn a_reading_a_move_overlapped_keeps_the_last_sample_and_waits_a_period() {
+        let now: Instant = Instant::now();
+        let mut sampler: Sampler = Sampler::new(now);
+        sampler.record(now, after(1, 3), Ok(HERE));
+        let later: Instant = now + Duration::from_millis(20);
+        assert_eq!(
+            (
+                sampler.take(later, None),
+                sampler.at().map(|sample: &Sample| sample.applied.clone()),
+                sampler.until_due(later)
+            ),
+            (false, Some(after(1, 3)), CURSOR_SAMPLE_MOVING)
+        );
+    }
+
+    #[test]
+    fn a_clean_reading_is_recorded() {
+        let now: Instant = Instant::now();
+        let mut sampler: Sampler = Sampler::new(now);
+        assert_eq!(
+            (
+                sampler.take(now, Some((after(1, 3), Ok(THERE)))),
+                sampler.at().cloned()
+            ),
+            (
+                true,
+                Some(Sample {
+                    at: THERE,
+                    applied: after(1, 3)
+                })
+            )
         );
     }
 
@@ -258,9 +297,7 @@ mod tests {
         let now: Instant = Instant::now();
         let mut sampler: Sampler = Sampler::new(now);
         sampler.record(now, Applied::new(), Ok(HERE));
-        let (_, applied): (watch::Sender<Applied>, watch::Receiver<Applied>) =
-            watch::channel(after(1, 1));
-        assert!(!sampler.sample_if_due(now, &applied));
+        assert!(!sampler.sample_if_due(now, &Marks::default()));
     }
 
     #[test]
