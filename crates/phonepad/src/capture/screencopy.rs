@@ -36,7 +36,7 @@ use super::plan::{
     self, Buffer, Constraints, Pending, Schedule, Shot, Shown, Slot, Target, schedule,
 };
 use super::{Feed, KeyframeRequest, Pointer, Unit};
-use pool::{Pool, Surface};
+use pool::{Pool, Session, Surface};
 
 const RETRY: Duration = Duration::from_millis(100);
 const MONITORS_MAX_AGE: Duration = Duration::from_secs(1);
@@ -136,8 +136,9 @@ fn close(queue: &mut EventQueue<State>, state: &mut State) -> anyhow::Result<()>
         return Ok(());
     };
     for slot in &pool.slots {
-        if let Slot::Capturing { frame, .. } = slot {
-            frame.destroy();
+        match slot {
+            Slot::Requested { frame, .. } | Slot::Copying { frame, .. } => frame.destroy(),
+            Slot::Free | Slot::Held { .. } => {}
         }
     }
     for session in &pool.sessions {
@@ -229,26 +230,17 @@ impl State {
         let Some(pool) = self.pool.as_mut() else {
             return Ok(());
         };
-        let busy: Vec<usize> = pool
-            .slots
-            .iter()
-            .filter_map(|slot: &Slot<ExtImageCopyCaptureFrameV1>| match slot {
-                Slot::Capturing { session, .. } => Some(*session),
-                Slot::Free | Slot::Held { .. } => None,
-            })
-            .collect();
-        let idle: Vec<usize> = (0..pool.sessions.len())
-            .filter(|index: &usize| pool.sessions[*index].ready && !busy.contains(index))
-            .collect();
         let pinned: Vec<bool> = pool
             .surfaces
             .iter()
             .map(|surface: &Surface| Arc::strong_count(&surface.surface) > 1)
             .collect();
-        for (index, session) in plan::to_issue(&pool.slots, &pinned, idle.len())
-            .into_iter()
-            .zip(idle)
-        {
+        let ready: Vec<bool> = pool
+            .sessions
+            .iter()
+            .map(|session: &Session| session.ready)
+            .collect();
+        if let Some((index, session)) = plan::to_issue(&pool.slots, &pinned, &ready) {
             let plane: &Dmabuf = pool.surfaces[index].surface.dmabuf();
             let (width, height): (i32, i32) =
                 (i32::try_from(plane.width)?, i32::try_from(plane.height)?);
@@ -257,7 +249,7 @@ impl State {
             frame.attach_buffer(&pool.surfaces[index].buffer);
             frame.damage_buffer(0, 0, width, height);
             frame.capture();
-            pool.slots[index] = Slot::Capturing {
+            pool.slots[index] = Slot::Requested {
                 frame,
                 session,
                 damage: Vec::new(),
@@ -385,20 +377,21 @@ impl State {
                 tv_sec_lo,
                 tv_nsec,
             } => {
-                if let Some(presented) = pool.presented.get_mut(index) {
-                    *presented = plan::stamp(tv_sec_hi, tv_sec_lo, tv_nsec);
-                }
+                plan::presented(
+                    &mut pool.slots,
+                    index,
+                    plan::stamp(tv_sec_hi, tv_sec_lo, tv_nsec),
+                );
             }
             ext_image_copy_capture_frame_v1::Event::Ready => {
                 frame.destroy();
-                let stamp: u64 = pool.presented.get(index).copied().unwrap_or(0);
                 pool.changed |=
                     pool.slots
                         .get(index)
                         .is_some_and(|slot: &Slot<ExtImageCopyCaptureFrameV1>| {
-                            plan::changes_shown(slot, stamp, pool.shown)
+                            plan::changes_shown(slot, pool.shown)
                         });
-                plan::arrive(&mut pool.slots, index, stamp);
+                plan::arrive(&mut pool.slots, index);
             }
             ext_image_copy_capture_frame_v1::Event::Damage {
                 x,

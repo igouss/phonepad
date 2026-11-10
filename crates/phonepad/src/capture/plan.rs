@@ -6,6 +6,7 @@ use phonepad_core::geometry::{Crop, Monitor, Point, Region, Size, Transform, win
 pub(super) const MIN_ENCODE_INTERVAL: Duration = Duration::from_micros(16_667);
 pub(super) const MIN_KEYFRAME_INTERVAL: Duration = Duration::from_millis(500);
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
+const UNTIMED: u64 = 0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Pixels {
@@ -70,10 +71,16 @@ pub(super) enum Misfit {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Slot<F> {
     Free,
-    Capturing {
+    Requested {
         frame: F,
         session: usize,
         damage: Vec<Crop>,
+    },
+    Copying {
+        frame: F,
+        session: usize,
+        damage: Vec<Crop>,
+        stamp: u64,
     },
     Held {
         stamp: u64,
@@ -166,30 +173,68 @@ pub(super) fn held<F>(slots: &[Slot<F>]) -> Option<(usize, u64)> {
         .enumerate()
         .find_map(|(index, slot): (usize, &Slot<F>)| match slot {
             Slot::Held { stamp } => Some((index, *stamp)),
-            Slot::Free | Slot::Capturing { .. } => None,
+            Slot::Free | Slot::Requested { .. } | Slot::Copying { .. } => None,
         })
 }
 
-pub(super) fn to_issue<F>(slots: &[Slot<F>], pinned: &[bool], in_flight: usize) -> Vec<usize> {
-    let capturing: usize = slots
-        .iter()
-        .filter(|slot: &&Slot<F>| match slot {
-            Slot::Capturing { .. } => true,
-            Slot::Free | Slot::Held { .. } => false,
-        })
-        .count();
-    slots
+pub(super) fn to_issue<F>(
+    slots: &[Slot<F>],
+    pinned: &[bool],
+    sessions_ready: &[bool],
+) -> Option<(usize, usize)> {
+    let mut busy: Vec<usize> = Vec::new();
+    for slot in slots {
+        match slot {
+            Slot::Requested { .. } => return None,
+            Slot::Copying { session, .. } => busy.push(*session),
+            Slot::Free | Slot::Held { .. } => {}
+        }
+    }
+    let session: usize = sessions_ready
         .iter()
         .enumerate()
-        .filter_map(|(index, slot): (usize, &Slot<F>)| match slot {
-            Slot::Free if !pinned.get(index).copied().unwrap_or(true) => Some(index),
-            Slot::Free | Slot::Capturing { .. } | Slot::Held { .. } => None,
-        })
-        .take(in_flight.saturating_sub(capturing))
-        .collect()
+        .position(|(session, ready): (usize, &bool)| *ready && !busy.contains(&session))?;
+    let index: usize = slots
+        .iter()
+        .enumerate()
+        .position(|(index, slot): (usize, &Slot<F>)| match slot {
+            Slot::Free => !pinned.get(index).copied().unwrap_or(true),
+            Slot::Requested { .. } | Slot::Copying { .. } | Slot::Held { .. } => false,
+        })?;
+    Some((index, session))
 }
 
-pub(super) fn arrive<F>(slots: &mut [Slot<F>], index: usize, stamp: u64) {
+pub(super) fn presented<F>(slots: &mut [Slot<F>], index: usize, at: u64) {
+    let Some(slot) = slots.get_mut(index) else {
+        return;
+    };
+    *slot = match std::mem::replace(slot, Slot::Free) {
+        Slot::Requested {
+            frame,
+            session,
+            damage,
+        }
+        | Slot::Copying {
+            frame,
+            session,
+            damage,
+            ..
+        } => Slot::Copying {
+            frame,
+            session,
+            damage,
+            stamp: at,
+        },
+        unchanged @ (Slot::Free | Slot::Held { .. }) => unchanged,
+    };
+}
+
+pub(super) fn arrive<F>(slots: &mut [Slot<F>], index: usize) {
+    let stamp: u64 = match slots.get(index) {
+        Some(Slot::Requested { .. }) => UNTIMED,
+        Some(Slot::Copying { stamp, .. }) => *stamp,
+        Some(Slot::Free | Slot::Held { .. }) | None => return,
+    };
     match held(slots) {
         Some((_, held)) if held >= stamp => slots[index] = Slot::Free,
         Some((previous, _)) => {
@@ -216,22 +261,23 @@ pub(super) fn damage(x: i32, y: i32, width: i32, height: i32) -> Option<Crop> {
 
 pub(super) fn damaged<F>(slots: &mut [Slot<F>], index: usize, rect: Crop) {
     match slots.get_mut(index) {
-        Some(Slot::Capturing { damage, .. }) => damage.push(rect),
+        Some(Slot::Requested { damage, .. } | Slot::Copying { damage, .. }) => damage.push(rect),
         Some(Slot::Free | Slot::Held { .. }) | None => {}
     }
 }
 
-pub(super) fn changes_shown<F>(slot: &Slot<F>, stamp: u64, shown: Option<Shown>) -> bool {
-    match (slot, shown) {
-        (Slot::Capturing { .. }, None) => true,
-        (Slot::Capturing { damage, .. }, Some(shown)) => {
-            stamp > shown.stamp
-                && damage
-                    .iter()
-                    .any(|rect: &Crop| rect.overlaps(shown.shot.crop))
-        }
-        (Slot::Free | Slot::Held { .. }, Some(_) | None) => false,
-    }
+pub(super) fn changes_shown<F>(slot: &Slot<F>, shown: Option<Shown>) -> bool {
+    let (damage, stamp): (&[Crop], u64) = match slot {
+        Slot::Requested { damage, .. } => (damage, UNTIMED),
+        Slot::Copying { damage, stamp, .. } => (damage, *stamp),
+        Slot::Free | Slot::Held { .. } => return false,
+    };
+    shown.is_none_or(|shown: Shown| {
+        stamp > shown.stamp
+            && damage
+                .iter()
+                .any(|rect: &Crop| rect.overlaps(shown.shot.crop))
+    })
 }
 
 pub(super) fn stamp(seconds_high: u32, seconds_low: u32, nanos: u32) -> u64 {
