@@ -4,7 +4,7 @@ Date: 2026-11-10. Status: Proposed (spike r9c.6; the operator decides adoption).
 
 ## Weakest part at the time
 
-Every byte between the phone and phonepad rides one TCP connection: units, acks, pointer messages and moves, through `tailscale serve`. A lost segment holds everything behind it until the retransmission lands, so one loss on cellular delays the picture, the pointer message and the moves together. ADR 0005 sized the window so a stall no longer costs a keyframe; the stall itself is left, and the latency harness counts 30–45 gaps over 250 ms a minute at bad-lte.
+Every byte between the phone and phonepad rides one TCP connection: units, acks, pointer messages and moves, through `tailscale serve`. A lost segment holds everything behind it until the retransmission lands, so one loss on cellular delays the picture, the pointer message and the moves together. ADR 0005 sized the window so a stall no longer costs a keyframe; the stall itself is left, and the harness's TCP emulator, replayed here (`ws-proxy` below), yields 43 gaps over 250 ms a minute at bad-lte.
 
 ## Forces
 
@@ -24,7 +24,7 @@ Four paths, because the two userspace emulators do not model loss the same way:
 - `wt-relay`: WebTransport (wtransport 0.7.2 on quinn 0.11; one unidirectional stream per unit, acks and pings on their own bidirectional streams) through the new UDP emulator, which really drops datagrams and lets QUIC recover.
 - `ws-direct`, `wt-direct`: the same clients with no userspace emulator, inside `unshare -rn` with kernel netem on `lo` (`delay 75ms 25ms rate 3mbit loss 1%`, MTU 1280, GSO off): real Linux TCP and real quinn against the same real loss.
 
-Known cases: `transport calibrate` passes (probe RTT +100.1 / +200.1 ms for 100 / 200 ms set; 1.14% of 20 000 datagrams lost at 1% set, within 3σ = 0.21%; 2.000 Mbit/s through a 2 Mbit/s cap with queue overflows; at 150 ± 50 ms every RTT within [100, 205]) and fails on planted mutants (half the delay: +50 / +100 ms; no loss: 0.000%). netem with the same knobs measured 0.86% one-way loss and probe RTT p50 181 ms against the UDP emulator's 169 ms (both keep packets in order, which skews the median above 150). `ws-proxy` reproduces ADR 0005's acking viewer at bad-lte: 50 units/s, longest gap 348–357 ms (ADR 0005: 344–375), send→ack p95 456–470 ms (439–449).
+Known cases: `transport calibrate` passes (probe RTT +100.1 / +200.1 ms for 100 / 200 ms set; 1.14% of 20 000 datagrams lost at 1% set, within 3σ = 0.21%; 2.000 Mbit/s through a 2 Mbit/s cap with queue overflows; at 150 ± 50 ms every RTT within [100, 205]) and fails on planted mutants (half the delay: +50 / +100 ms; no loss: 0.000%). netem with the same knobs measured 0.86% one-way loss and probe RTT p50 181 ms against the UDP emulator's 169 ms (the UDP emulator keeps order by construction, which skews its median above 150; netem's ordering with `rate` set was not verified). The netem TCP arm met per-segment loss: in a 15 s `ws-direct` run netem sent 4994 packets and dropped 49 (0.98%), against 5031 TCP segments sent and 35 retransmitted, so TCP passed one segment per packet (no aggregated skbs). `ws-proxy` reproduces ADR 0005's acking viewer at bad-lte: 50 units/s, longest gap 348–357 ms (ADR 0005: 344–375), send→ack p95 456–470 ms (439–449).
 
 ## Evidence
 
