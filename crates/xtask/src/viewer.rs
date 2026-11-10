@@ -50,6 +50,7 @@ fn request(port: u16, login: Option<&str>) -> Result<Request, String> {
 pub fn handshake(port: u16, login: Option<&str>) -> Result<Handshake, String> {
     let tcp: TcpStream = TcpStream::connect((Ipv4Addr::LOCALHOST, port))
         .map_err(|e| format!("connect 127.0.0.1:{port}: {e}"))?;
+    tcp.set_nodelay(true).map_err(|e| e.to_string())?;
     tcp.set_read_timeout(Some(HANDSHAKE_TIMEOUT))
         .map_err(|e| e.to_string())?;
     match tungstenite::client(request(port, login)?, tcp) {
