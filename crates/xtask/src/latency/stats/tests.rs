@@ -3,6 +3,7 @@ use crate::latency::link;
 
 fn unit(bytes: u64, capture_send: f64, send_ack: f64) -> Sample {
     Sample::Unit {
+        id: 4,
         bytes,
         capture_send,
         send_ack,
@@ -64,6 +65,16 @@ fn a_record_of_another_type_is_no_sample() {
 fn a_unit_missing_a_field_is_no_sample() {
     assert_eq!(
         sample(r#"timing {"t":"unit","bytes":104,"capture_send_ms":2.5}"#),
+        None
+    );
+}
+
+#[test]
+fn a_unit_without_an_id_is_no_sample() {
+    assert_eq!(
+        sample(
+            r#"timing {"t":"unit","key":false,"bytes":104,"capture_send_ms":2.5,"send_ack_ms":60.0}"#
+        ),
         None
     );
 }

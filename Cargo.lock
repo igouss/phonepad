@@ -1141,8 +1141,11 @@ dependencies = [
  "evdev",
  "phonepad-core",
  "phonepad-h264",
+ "rustix",
  "serde_json",
  "tungstenite",
+ "wayland-client",
+ "wayland-protocols",
 ]
 
 [[package]]

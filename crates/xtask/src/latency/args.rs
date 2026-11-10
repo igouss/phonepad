@@ -1,8 +1,11 @@
 use super::link::{self, Profile};
+use super::nested::STOCK;
+use std::path::PathBuf;
 use std::time::Duration;
 
 pub const DEFAULT_PORT: u16 = 8771;
 pub const DEFAULT_MEASURED: Duration = Duration::from_secs(15);
+pub const DEFAULT_HZ: u32 = 60;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Run {
@@ -10,6 +13,13 @@ pub enum Run {
     Viewer(Vec<Profile>),
     Touch(Vec<Profile>),
     Calibrate,
+    Content,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Desktop {
+    Live,
+    Nested { hyprland: PathBuf, hz: u32 },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -17,12 +27,16 @@ pub struct Plan {
     pub run: Run,
     pub port: u16,
     pub measured: Duration,
+    pub desktop: Desktop,
 }
 
 #[derive(Default)]
 struct Words<'a> {
     viewer: bool,
     touch: bool,
+    nested: bool,
+    hyprland: Option<PathBuf>,
+    hz: Option<u32>,
     port: Option<u16>,
     seconds: Option<u64>,
     rest: Vec<&'a str>,
@@ -40,8 +54,11 @@ fn words<'a>(all: &[&'a str]) -> Result<Words<'a>, String> {
             match (word.split_once('='), *word) {
                 (Some(("port", value)), _) => words.port = Some(option("port", value)?),
                 (Some(("seconds", value)), _) => words.seconds = Some(option("seconds", value)?),
+                (Some(("hyprland", value)), _) => words.hyprland = Some(PathBuf::from(value)),
+                (Some(("hz", value)), _) => words.hz = Some(option("hz", value)?),
                 (None, "viewer") => words.viewer = true,
                 (None, "touch") => words.touch = true,
+                (None, "nested") => words.nested = true,
                 (Some(_) | None, _) => words.rest.push(word),
             }
             Ok(words)
@@ -50,6 +67,21 @@ fn words<'a>(all: &[&'a str]) -> Result<Words<'a>, String> {
 
 pub fn plan(all: &[&str]) -> Result<Plan, String> {
     let words: Words = words(all)?;
+    let desktop: Desktop = match (words.nested, words.hyprland.clone(), words.hz) {
+        (false, None, None) => Desktop::Live,
+        (false, Some(_), _) | (false, None, Some(_)) => {
+            return Err(String::from("hyprland= and hz= need nested"));
+        }
+        (true, hyprland, hz) => Desktop::Nested {
+            hyprland: hyprland.unwrap_or_else(|| PathBuf::from(STOCK)),
+            hz: hz.unwrap_or(DEFAULT_HZ),
+        },
+    };
+    if words.touch && words.nested {
+        return Err(String::from(
+            "touch moves the live pointer through uinput, which a nested Hyprland does not see",
+        ));
+    }
     let run: Run = match (words.viewer, words.touch, words.rest.as_slice()) {
         (true, true, _) => {
             return Err(String::from(
@@ -61,7 +93,15 @@ pub fn plan(all: &[&str]) -> Result<Plan, String> {
                 "latency needs a profile: lan, wifi, lte, bad-lte, rtt=<ms>,jitter=<ms>,rate=<Mbit/s>,loss=<%>, or calibrate",
             ));
         }
-        (false, false, ["calibrate"]) => Run::Calibrate,
+        (false, false, ["calibrate"]) => match (&desktop, words.hz) {
+            (Desktop::Live, _) => Run::Calibrate,
+            (Desktop::Nested { .. }, None) => Run::Content,
+            (Desktop::Nested { .. }, Some(_)) => {
+                return Err(String::from(
+                    "nested calibrate paints at its own rates; drop hz=",
+                ));
+            }
+        },
         (true, false, ["calibrate"]) | (false, true, ["calibrate"]) => {
             return Err(String::from("calibrate always uses the acking viewer"));
         }
@@ -85,6 +125,7 @@ pub fn plan(all: &[&str]) -> Result<Plan, String> {
             Some(seconds) => Duration::from_secs(seconds),
             None => DEFAULT_MEASURED,
         },
+        desktop,
     })
 }
 

@@ -79,11 +79,23 @@
       },
       {
         "from": "c_xtask",
+        "to": "c_rustix_1_1_6"
+      },
+      {
+        "from": "c_xtask",
         "to": "c_serde_json_1_0_154"
       },
       {
         "from": "c_xtask",
         "to": "c_tungstenite_0_29_0"
+      },
+      {
+        "from": "c_xtask",
+        "to": "c_wayland_client_0_31_15"
+      },
+      {
+        "from": "c_xtask",
+        "to": "c_wayland_protocols_0_32_13"
       }
     ],
     "nodes": [

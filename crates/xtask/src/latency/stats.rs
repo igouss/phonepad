@@ -9,6 +9,7 @@ const PREFIX: &str = "timing ";
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Sample {
     Unit {
+        id: u32,
         bytes: u64,
         capture_send: f64,
         send_ack: f64,
@@ -46,6 +47,7 @@ pub fn sample(line: &str) -> Option<Sample> {
     let number = |key: &str| record[key].as_f64();
     match record["t"].as_str()? {
         "unit" => Some(Sample::Unit {
+            id: u32::try_from(record["id"].as_u64()?).ok()?,
             bytes: record["bytes"].as_u64()?,
             capture_send: number("capture_send_ms")?,
             send_ack: number("send_ack_ms")?,
@@ -78,6 +80,7 @@ fn units(samples: &[Sample]) -> impl Iterator<Item = (u64, f64, f64)> + '_ {
             bytes,
             capture_send,
             send_ack,
+            ..
         } => Some((bytes, capture_send, send_ack)),
         Sample::Drawn { .. } => None,
     })
