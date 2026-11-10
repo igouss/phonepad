@@ -29,7 +29,13 @@ pub struct Scratch {
 impl Scratch {
     pub fn create(name: &str) -> Result<Scratch, String> {
         let scratch: Scratch = Scratch {
-            dir: std::env::temp_dir().join(format!("phonepad-{name}-{}", std::process::id())),
+            dir: std::env::temp_dir().join(format!(
+                "phonepad-{name}-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e| e.to_string())?
+                    .as_nanos()
+            )),
         };
         let owe: PathBuf = scratch.bin().join("owe");
         std::fs::create_dir_all(scratch.bin())

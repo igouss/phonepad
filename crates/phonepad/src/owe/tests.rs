@@ -7,12 +7,32 @@ struct Rig {
     marker: PathBuf,
 }
 
+fn unique_dir(prefix: &str) -> PathBuf {
+    let nanos: u128 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir: PathBuf = std::env::temp_dir().join(format!("{prefix}-{nanos}"));
+    std::fs::create_dir(&dir).unwrap();
+    dir
+}
+
+impl Drop for Rig {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+#[test]
+fn rigs_with_the_same_name_get_separate_dirs() {
+    let first: Rig = Rig::new("same");
+    let second: Rig = Rig::new("same");
+    assert_ne!(first.dir, second.dir);
+}
+
 impl Rig {
     fn new(name: &str) -> Rig {
-        let dir: PathBuf =
-            std::env::temp_dir().join(format!("phonepad-owe-test-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir: PathBuf = unique_dir(&format!("phonepad-owe-test-{name}"));
         symlink(
             Path::new(env!("CARGO_MANIFEST_DIR")).join("src/owe/stub.sh"),
             dir.join("owe"),
