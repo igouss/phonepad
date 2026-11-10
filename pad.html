@@ -53,15 +53,20 @@ const ctx = view.getContext("2d");
 const zoombtn = document.getElementById("zoombtn");
 let zoom = 2.5;
 try { const z = parseFloat(localStorage.getItem("zoom")); if (ZOOMS.includes(z)) zoom = z; } catch (_) {}
-let ws = null, seq = 0;
+const probe = globalThis.padProbe;
+let ws = null, model = Pointer.fresh(), heading = { x: 0, y: 0 }, touched = null;
 function connect() {
   ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   ws.binaryType = "arraybuffer";
-  ws.onopen = () => { status.textContent = "connected"; seq = 0; restart(); sendView(); sendVisible(); };
+  ws.onopen = () => { status.textContent = "connected"; model = Pointer.fresh(); restart(); sendView(); sendVisible(); };
   ws.onclose = () => { status.textContent = "disconnected"; setTimeout(connect, 1000); };
   ws.onmessage = ev => { if (ev.data instanceof ArrayBuffer) onMessage(ev.data); };
 }
-const send = m => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); };
+function send(m) {
+  if (!ws || ws.readyState !== 1) return false;
+  ws.send(JSON.stringify(m));
+  return true;
+}
 function sendVisible() { send({ t: "visible", v: document.visibilityState === "visible" }); }
 function sendView() {
   const r = pad.getBoundingClientRect();
@@ -87,28 +92,30 @@ function nals(b) {
 }
 const shot = document.createElement("canvas");
 const shotCtx = shot.getContext("2d");
-let win = null, cur = null, painting = false, fresh = null;
+let win = null, dirty = false, fresh = null;
 const ORIENT = [
   (w, h) => [1, 0, 0, 1, 0, 0], (w, h) => [0, 1, -1, 0, h, 0], (w, h) => [-1, 0, 0, -1, w, h], (w, h) => [0, -1, 1, 0, 0, w],
   (w, h) => [-1, 0, 0, 1, w, 0], (w, h) => [0, 1, 1, 0, 0, 0], (w, h) => [1, 0, 0, -1, 0, h], (w, h) => [0, -1, -1, 0, h, w],
 ];
 function paint() {
-  painting = false;
-  if (!win || !cur) return;
+  const at = Pointer.predicted(model);
+  if (!win || !at) return;
   const W = view.width, H = view.height, r = pad.getBoundingClientRect();
-  const { x: vx, y: vy, w: vw, h: vh } = Pointer.place(cur, { w: Math.round(r.width * zoom), h: Math.round(r.height * zoom) }, win);
-  const s = Math.min(W / vw, H / vh);
-  const ox = (W - vw * s) / 2, oy = (H - vh * s) / 2;
+  const v = Pointer.view(at, { w: Math.round(r.width * zoom), h: Math.round(r.height * zoom) }, model.heard.monitor);
+  const s = Math.min(W / v.w, H / v.h);
+  const ox = (W - v.w * s) / 2, oy = (H - v.h * s) / 2;
   ctx.fillStyle = "#1b1b1b"; ctx.fillRect(0, 0, W, H);
-  ctx.drawImage(shot, vx - win.x, vy - win.y, vw, vh, ox, oy, vw * s, vh * s);
-  const px = ox + (cur.x - vx) * s, py = oy + (cur.y - vy) * s, rad = 14 * devicePixelRatio;
+  const part = Pointer.shown(v, win);
+  if (part) ctx.drawImage(shot, part.x - win.x, part.y - win.y, part.w, part.h, ox + (part.x - v.x) * s, oy + (part.y - v.y) * s, part.w * s, part.h * s);
+  const px = ox + (at.x - v.x) * s, py = oy + (at.y - v.y) * s, rad = 14 * devicePixelRatio;
   ctx.lineWidth = 5 * devicePixelRatio; ctx.strokeStyle = "rgba(0,0,0,.7)";
   ctx.beginPath(); ctx.arc(px, py, rad, 0, 2 * Math.PI); ctx.stroke();
   ctx.lineWidth = 2.5 * devicePixelRatio; ctx.strokeStyle = "#3d6";
   ctx.beginPath(); ctx.arc(px, py, rad, 0, 2 * Math.PI); ctx.stroke();
   if (fresh) { send({ t: "drawn", id: fresh.id, rx: fresh.rx, dec: fresh.dec, at: performance.now() }); fresh = null; }
+  if (touched) { probe?.drawn(touched.event, touched.handled, performance.now()); touched = null; }
 }
-function repaint() { if (!painting) { painting = true; requestAnimationFrame(paint); } }
+function repaint() { dirty = true; }
 function output(frame) {
   try {
     let head = null;
@@ -144,10 +151,17 @@ function configure(sps, id) {
   decoder.configure({ codec: "avc1." + hex(sps[1]) + hex(sps[2]) + hex(sps[3]), optimizeForLatency: true, hardwareAcceleration: "prefer-hardware" });
   spsId = id; needKey = true;
 }
+function heard(p) {
+  const before = Pointer.predicted(model);
+  model = Pointer.heard(model, { x: p.getInt32(1), y: p.getInt32(5) }, p.getUint32(9),
+    { x: p.getInt32(13), y: p.getInt32(17), w: p.getUint32(21), h: p.getUint32(25) });
+  probe?.reconciled(before, Pointer.predicted(model), heading);
+  repaint();
+}
 function onMessage(buf) {
   const rx = performance.now();
   const h = new DataView(buf, 0, Math.min(buf.byteLength, 14));
-  if (h.getUint8(0) === 1) { cur = { x: h.getInt32(1), y: h.getInt32(5) }; repaint(); return; }
+  if (h.getUint8(0) === 1) { heard(new DataView(buf)); return; }
   const head = { id: h.getUint32(1), wx: h.getInt32(5), wy: h.getInt32(9), t: h.getUint8(13) & 7, ts: stamp, rx };
   const au = new Uint8Array(buf, 14);
   const units = nals(au);
@@ -218,7 +232,12 @@ pad.addEventListener("touchmove", ev => {
   dx /= n; dy /= n;
   gesture.moved += Math.hypot(dx, dy);
   if (touches.size >= 2) { acc.sx += dx * SCROLL; acc.sy += dy * SCROLL; }
-  else { const a = Pointer.accelerate(dx, dy); acc.x += a.x; acc.y += a.y; }
+  else {
+    const a = Pointer.accelerate(dx, dy);
+    acc.x += a.x; acc.y += a.y;
+    touched ??= { event: ev.timeStamp, handled: performance.now() };
+    repaint();
+  }
 }, { passive: false });
 function end(ev) {
   ev.preventDefault();
@@ -236,12 +255,19 @@ function end(ev) {
 pad.addEventListener("touchend", end, { passive: false });
 pad.addEventListener("touchcancel", end, { passive: false });
 
-(function flush() {
+function flush() {
   const mx = Math.trunc(acc.x), my = Math.trunc(acc.y);
-  if (mx || my) { send({ t: "move", dx: mx, dy: my, s: ++seq }); acc.x -= mx; acc.y -= my; }
+  if (mx || my) {
+    if (send({ t: "move", dx: mx, dy: my, s: model.next })) model = Pointer.sent(model, mx, my);
+    acc.x -= mx; acc.y -= my; heading = { x: mx, y: my }; repaint();
+  }
   const sx = Math.trunc(acc.sx), sy = Math.trunc(acc.sy);
   if (sx || sy) { send({ t: "scroll", dx: sx, dy: sy }); acc.sx -= sx; acc.sy -= sy; }
-  requestAnimationFrame(flush);
+}
+(function tick() {
+  flush();
+  if (dirty) { dirty = false; paint(); }
+  requestAnimationFrame(tick);
 })();
 
 const kbd = document.getElementById("kbd");
