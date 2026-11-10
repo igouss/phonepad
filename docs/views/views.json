@@ -67,6 +67,10 @@
       },
       {
         "from": "c_xtask",
+        "to": "c_evdev_0_13_2"
+      },
+      {
+        "from": "c_xtask",
         "to": "c_phonepad_core"
       },
       {

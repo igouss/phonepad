@@ -172,6 +172,7 @@ impl Instance {
         runtime: &Runtime,
         path: &OsStr,
         (port, login): (u16, &str),
+        env: &[(&str, &str)],
     ) -> Result<Instance, String> {
         let argv: [OsString; 3] = [
             bin.as_os_str().to_owned(),
@@ -184,6 +185,7 @@ impl Instance {
             .env("WAYLAND_DISPLAY", &runtime.display)
             .env("HYPRLAND_INSTANCE_SIGNATURE", &runtime.signature)
             .env("PATH", path)
+            .envs(env.iter().copied())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -221,6 +223,10 @@ impl Instance {
                 }
             }
         }
+    }
+
+    pub fn lines(&self) -> &Receiver<String> {
+        &self.stdout
     }
 
     pub fn running(&mut self) -> Check {

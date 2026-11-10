@@ -128,7 +128,7 @@ fn checks(report: &mut Report, bin: Option<PathBuf>) -> Result<(), String> {
     if !report.passed() {
         return Ok(());
     }
-    let mut instance: Instance = Instance::spawn(&bin, &runtime, &path, (PORT, LOGIN))?;
+    let mut instance: Instance = Instance::spawn(&bin, &runtime, &path, (PORT, LOGIN), &[])?;
     let (served, streaming): (Result<(), String>, Option<Viewing>) = match instance.listen() {
         Ok(after) => {
             report.line("listening", true, format!("listen line after {after:?}"));

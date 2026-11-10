@@ -1,6 +1,7 @@
 mod e2e;
 mod gates;
 mod h264_check;
+mod latency;
 mod lexer;
 mod machine;
 mod mermaid;
@@ -16,7 +17,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use views::VIEWS_DIR;
 
-const USAGE: &str = "usage: cargo xtask views [--root <dir>] [--out <dir>]\n       cargo xtask check [--root <dir>]\n       cargo xtask h264-check   (needs the Intel iGPU at /dev/dri/renderD128 and the ffmpeg CLI)\n       cargo xtask e2e [--bin <phonepad>]   (needs a live Hyprland session, the iGPU, /dev/uinput and the ffmpeg CLI; serves on port 8769)\n       target/debug/xtask profile <pid> <seconds> [--root <dir>]\n         (run the binary directly: a cargo runner with its own PID namespace hides host processes)";
+const USAGE: &str = "usage: cargo xtask views [--root <dir>] [--out <dir>]\n       cargo xtask check [--root <dir>]\n       cargo xtask h264-check   (needs the Intel iGPU at /dev/dri/renderD128 and the ffmpeg CLI)\n       cargo xtask e2e [--bin <phonepad>]   (needs a live Hyprland session, the iGPU, /dev/uinput and the ffmpeg CLI; serves on port 8769)\n       cargo xtask latency [--bin <phonepad>] <profile>... | calibrate   (needs a live Hyprland session, the iGPU, /dev/uinput and Chromium; serves on port 8771)
+         profiles: lan, wifi, lte, bad-lte, or rtt=<ms>,jitter=<ms>,rate=<Mbit/s>,loss=<%>
+       target/debug/xtask profile <pid> <seconds> [--root <dir>]\n         (run the binary directly: a cargo runner with its own PID namespace hides host processes)";
 
 #[derive(Debug, PartialEq, Eq)]
 enum Task {
@@ -35,6 +38,10 @@ enum Task {
     H264Check,
     E2e {
         bin: Option<PathBuf>,
+    },
+    Latency {
+        bin: Option<PathBuf>,
+        plan: latency::Plan,
     },
 }
 
@@ -93,6 +100,9 @@ fn parse(args: &[String]) -> Result<Task, String> {
         (["check"], None, None) => Ok(Task::Check { root }),
         (["h264-check"], None, None) if root.is_none() => Ok(Task::H264Check),
         (["e2e"], None, bin) if root.is_none() => Ok(Task::E2e { bin }),
+        (["latency", rest @ ..], None, bin) if root.is_none() => latency::plan(rest)
+            .map(|plan: latency::Plan| Task::Latency { bin, plan })
+            .map_err(|error: String| format!("{error}\n{USAGE}")),
         (["profile", pid, seconds], None, None) => Ok(Task::Profile {
             root,
             pid: number(pid, "pid")?,
@@ -140,6 +150,7 @@ fn run(task: Task) -> Result<bool, String> {
         }
         Task::H264Check => Ok(h264_check::run()),
         Task::E2e { bin } => Ok(e2e::run(bin)),
+        Task::Latency { bin, plan } => Ok(latency::run(bin, plan)),
     }
 }
 
@@ -230,6 +241,24 @@ mod tests {
                 bin: Some(PathBuf::from("/b/phonepad"))
             })
         );
+    }
+
+    #[test]
+    fn latency_takes_a_binary_and_profiles() {
+        assert!(matches!(
+            parse(&args("latency --bin /b/phonepad lan rtt=150,rate=5")),
+            Ok(Task::Latency { bin: Some(_), plan: crate::latency::Plan::Profiles(profiles) }) if profiles.len() == 2
+        ));
+    }
+
+    #[test]
+    fn latency_without_a_profile_is_a_usage_error() {
+        assert!(parse(&args("latency")).is_err());
+    }
+
+    #[test]
+    fn latency_rejects_a_root() {
+        assert!(parse(&args("latency --root /w lan")).is_err());
     }
 
     #[test]
