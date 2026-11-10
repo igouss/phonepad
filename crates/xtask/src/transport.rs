@@ -477,7 +477,9 @@ fn serve(report: &mut Report, port: u16, seconds: u64) -> Result<(), String> {
         .enable_all()
         .build()
         .map_err(|e| e.to_string())?;
+    let entered: tokio::runtime::EnterGuard = runtime.enter();
     let server: replay::WtServer = replay::wt_bind(port, Congestion::Cubic)?;
+    drop(entered);
     let page: String = smoke_page(server.port, &server.hash);
     let listener: tokio::net::TcpListener = runtime
         .block_on(tokio::net::TcpListener::bind(("127.0.0.1", port + 1)))
