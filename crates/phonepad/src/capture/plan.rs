@@ -33,29 +33,43 @@ pub(super) struct Target {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum CopyMode {
-    Immediate,
-    OnDamage,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Offer {
+pub(super) struct Buffer {
     pub(super) fourcc: u32,
+    pub(super) modifier: u64,
     pub(super) width: u32,
     pub(super) height: u32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct Constraints {
+    pub(super) size: Option<(u32, u32)>,
+    pub(super) dmabuf: Vec<(u32, Vec<u64>)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub(super) enum Misfit {
+    #[error("the compositor gave no buffer size")]
+    NoSize,
+    #[error("the compositor wants {wanted:?} pixel buffers, the encoder surfaces are {have:?}")]
+    Size {
+        wanted: (u32, u32),
+        have: (u32, u32),
+    },
+    #[error(
+        "the compositor takes no dmabuf of format {fourcc:#x} with modifier {modifier:#x}; it offers {offered:x?}"
+    )]
+    Format {
+        fourcc: u32,
+        modifier: u64,
+        offered: Vec<(u32, Vec<u64>)>,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Slot<F> {
     Free,
-    Capturing {
-        frame: F,
-        mode: CopyMode,
-        offer: Option<Offer>,
-    },
-    Held {
-        stamp: u64,
-    },
+    Capturing { frame: F, session: usize },
+    Held { stamp: u64 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -111,11 +125,26 @@ pub(super) fn keyframe_due(requested: bool, since_keyframe: Option<Duration>) ->
     requested && since_keyframe.is_none_or(|elapsed: Duration| elapsed >= MIN_KEYFRAME_INTERVAL)
 }
 
-pub(super) fn copy_mode(holds_a_frame: bool) -> CopyMode {
-    if holds_a_frame {
-        CopyMode::OnDamage
+pub(super) fn fits(constraints: &Constraints, buffer: Buffer) -> Result<(), Misfit> {
+    let size: (u32, u32) = constraints.size.ok_or(Misfit::NoSize)?;
+    let have: (u32, u32) = (buffer.width, buffer.height);
+    if size != have {
+        return Err(Misfit::Size { wanted: size, have });
+    }
+    if constraints
+        .dmabuf
+        .iter()
+        .any(|(fourcc, modifiers): &(u32, Vec<u64>)| {
+            *fourcc == buffer.fourcc && modifiers.contains(&buffer.modifier)
+        })
+    {
+        Ok(())
     } else {
-        CopyMode::Immediate
+        Err(Misfit::Format {
+            fourcc: buffer.fourcc,
+            modifier: buffer.modifier,
+            offered: constraints.dmabuf.clone(),
+        })
     }
 }
 
@@ -375,21 +404,103 @@ mod tests {
         assert!(!keyframe_due(false, Some(Duration::from_secs(10))));
     }
 
-    #[test]
-    fn a_surface_with_no_frame_yet_is_copied_immediately() {
-        assert_eq!(copy_mode(false), CopyMode::Immediate);
+    const AR24: u32 = 0x3432_5241;
+    const XR24: u32 = 0x3432_5258;
+    const SURFACE: Buffer = Buffer {
+        fourcc: AR24,
+        modifier: 0,
+        width: 2560,
+        height: 1440,
+    };
+
+    fn offered(size: Option<(u32, u32)>, dmabuf: &[(u32, &[u64])]) -> Constraints {
+        Constraints {
+            size,
+            dmabuf: dmabuf
+                .iter()
+                .map(|(fourcc, modifiers): &(u32, &[u64])| (*fourcc, modifiers.to_vec()))
+                .collect(),
+        }
     }
 
     #[test]
-    fn once_a_frame_is_held_captures_wait_for_damage() {
-        assert_eq!(copy_mode(true), CopyMode::OnDamage);
+    fn no_buffer_size_does_not_fit() {
+        assert_eq!(
+            fits(&offered(None, &[(AR24, &[0])]), SURFACE),
+            Err(Misfit::NoSize)
+        );
+    }
+
+    #[test]
+    fn the_offered_size_and_format_fit() {
+        assert_eq!(
+            fits(&offered(Some((2560, 1440)), &[(AR24, &[0])]), SURFACE),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_wider_buffer_does_not_fit() {
+        assert_eq!(
+            fits(&offered(Some((2561, 1440)), &[(AR24, &[0])]), SURFACE),
+            Err(Misfit::Size {
+                wanted: (2561, 1440),
+                have: (2560, 1440)
+            })
+        );
+    }
+
+    #[test]
+    fn a_taller_buffer_does_not_fit() {
+        assert!(matches!(
+            fits(&offered(Some((2560, 1441)), &[(AR24, &[0])]), SURFACE),
+            Err(Misfit::Size { .. })
+        ));
+    }
+
+    #[test]
+    fn no_dmabuf_format_does_not_fit() {
+        assert_eq!(
+            fits(&offered(Some((2560, 1440)), &[]), SURFACE),
+            Err(Misfit::Format {
+                fourcc: AR24,
+                modifier: 0,
+                offered: Vec::new()
+            })
+        );
+    }
+
+    #[test]
+    fn the_format_without_the_linear_modifier_does_not_fit() {
+        assert!(matches!(
+            fits(&offered(Some((2560, 1440)), &[(AR24, &[1, 2])]), SURFACE),
+            Err(Misfit::Format { .. })
+        ));
+    }
+
+    #[test]
+    fn the_linear_modifier_on_another_format_does_not_fit() {
+        assert!(matches!(
+            fits(&offered(Some((2560, 1440)), &[(XR24, &[0])]), SURFACE),
+            Err(Misfit::Format { .. })
+        ));
+    }
+
+    #[test]
+    fn one_of_many_formats_fits() {
+        assert_eq!(
+            fits(
+                &offered(Some((2560, 1440)), &[(XR24, &[0]), (AR24, &[7, 0])]),
+                SURFACE
+            ),
+            Ok(())
+        );
     }
 
     fn capturing() -> Slot<()> {
         Slot::Capturing {
             frame: (),
-            mode: CopyMode::OnDamage,
-            offer: None,
+            session: 0,
         }
     }
 

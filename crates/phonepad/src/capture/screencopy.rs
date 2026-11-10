@@ -15,15 +15,22 @@ use tokio::sync::{broadcast, watch};
 use wayland_client::backend::WaylandError;
 use wayland_client::protocol::wl_buffer::WlBuffer;
 use wayland_client::protocol::wl_output::WlOutput;
-use wayland_client::{Connection, EventQueue, QueueHandle, WEnum};
+use wayland_client::{Connection, EventQueue, QueueHandle};
+use wayland_protocols::ext::image_capture_source::v1::client::ext_image_capture_source_v1::ExtImageCaptureSourceV1;
+use wayland_protocols::ext::image_capture_source::v1::client::ext_output_image_capture_source_manager_v1::ExtOutputImageCaptureSourceManagerV1;
+use wayland_protocols::ext::image_copy_capture::v1::client::ext_image_copy_capture_frame_v1::{
+    self, ExtImageCopyCaptureFrameV1,
+};
+use wayland_protocols::ext::image_copy_capture::v1::client::ext_image_copy_capture_manager_v1::{
+    self, ExtImageCopyCaptureManagerV1,
+};
+use wayland_protocols::ext::image_copy_capture::v1::client::ext_image_copy_capture_session_v1::{
+    self, ExtImageCopyCaptureSessionV1,
+};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_buffer_params_v1::{
     self, ZwpLinuxBufferParamsV1,
 };
 use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1;
-use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_frame_v1::{
-    self, ZwlrScreencopyFrameV1,
-};
-use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1;
 
 use crate::hypr;
 
@@ -32,7 +39,7 @@ mod dispatch;
 use super::cursor::Sampler;
 use super::lane::{Job, Lane};
 use super::plan::{
-    self, CopyMode, Offer, Pending, Pixels, Schedule, Shape, Shot, Slot, Target, schedule,
+    self, Buffer, Constraints, Pending, Pixels, Schedule, Shape, Shot, Slot, Target, schedule,
 };
 use super::{Feed, KeyframeRequest, Unit};
 
@@ -49,12 +56,21 @@ struct Surface {
     buffer: WlBuffer,
 }
 
+struct Session {
+    proxy: ExtImageCopyCaptureSessionV1,
+    constraints: Constraints,
+    ready: bool,
+}
+
 struct Pool {
     shape: Shape,
     cropper: Cropper,
     lane: Lane,
+    source: ExtImageCaptureSourceV1,
+    sessions: Vec<Session>,
     surfaces: Vec<Surface>,
-    slots: Vec<Slot<ZwlrScreencopyFrameV1>>,
+    slots: Vec<Slot<ExtImageCopyCaptureFrameV1>>,
+    presented: Vec<u64>,
     new_frame: bool,
     shown: Option<Shot>,
     encoded_at: Option<Instant>,
@@ -68,7 +84,8 @@ struct NamedOutput {
 
 struct State {
     dmabuf: Option<ZwpLinuxDmabufV1>,
-    manager: Option<ZwlrScreencopyManagerV1>,
+    sources: Option<ExtOutputImageCaptureSourceManagerV1>,
+    manager: Option<ExtImageCopyCaptureManagerV1>,
     outputs: Vec<NamedOutput>,
     view: watch::Receiver<Option<Size>>,
     sampler: Sampler,
@@ -90,6 +107,7 @@ pub(super) fn run(stop: &AtomicBool, feed: Feed) -> anyhow::Result<()> {
     conn.display().get_registry(&qh, ());
     let mut state: State = State {
         dmabuf: None,
+        sources: None,
         manager: None,
         outputs: Vec::new(),
         view: feed.view,
@@ -108,8 +126,10 @@ pub(super) fn run(stop: &AtomicBool, feed: Feed) -> anyhow::Result<()> {
     queue
         .roundtrip(&mut state)
         .context("wayland output names")?;
-    if state.dmabuf.is_none() || state.manager.is_none() {
-        bail!("compositor lacks zwp_linux_dmabuf_v1 or zwlr_screencopy_manager_v1");
+    if state.dmabuf.is_none() || state.sources.is_none() || state.manager.is_none() {
+        bail!(
+            "compositor lacks zwp_linux_dmabuf_v1, ext_output_image_capture_source_manager_v1 or ext_image_copy_capture_manager_v1"
+        );
     }
     let mut wait_for: Duration = WAKE;
     while !stop.load(Ordering::Relaxed) {
@@ -153,6 +173,10 @@ fn close(queue: &mut EventQueue<State>, state: &mut State) -> anyhow::Result<()>
             frame.destroy();
         }
     }
+    for session in &pool.sessions {
+        session.proxy.destroy();
+    }
+    pool.source.destroy();
     for surface in &pool.surfaces {
         surface.buffer.destroy();
     }
@@ -207,6 +231,33 @@ impl Pool {
         qh: &QueueHandle<State>,
     ) -> anyhow::Result<Pool> {
         let dmabuf: &ZwpLinuxDmabufV1 = state.dmabuf.as_ref().context("linux-dmabuf not bound")?;
+        let output: &WlOutput = &state
+            .outputs
+            .iter()
+            .find(|o: &&NamedOutput| o.name.as_deref() == Some(shape.output.as_str()))
+            .with_context(|| format!("no wayland output named {}", shape.output))?
+            .proxy;
+        let source: ExtImageCaptureSourceV1 = state
+            .sources
+            .as_ref()
+            .context("capture source manager not bound")?
+            .create_source(output, qh, ());
+        let manager: &ExtImageCopyCaptureManagerV1 = state
+            .manager
+            .as_ref()
+            .context("copy capture manager not bound")?;
+        let sessions: Vec<Session> = (0..IN_FLIGHT)
+            .map(|index: usize| Session {
+                proxy: manager.create_session(
+                    &source,
+                    ext_image_copy_capture_manager_v1::Options::empty(),
+                    qh,
+                    index,
+                ),
+                constraints: Constraints::default(),
+                ready: false,
+            })
+            .collect();
         let (mut cropper, h264): (Cropper, H264) = phonepad_h264::open(
             render_node,
             source_size(shape.source),
@@ -228,8 +279,11 @@ impl Pool {
             shape: shape.clone(),
             cropper,
             lane: Lane::start(h264, state.units.clone())?,
+            source,
+            sessions,
             surfaces,
             slots: (0..POOL).map(|_| Slot::Free).collect(),
+            presented: vec![0; POOL],
             new_frame: false,
             shown: None,
             encoded_at: None,
@@ -299,28 +353,31 @@ impl State {
         let Some(pool) = self.pool.as_mut() else {
             return Ok(());
         };
-        let output: &WlOutput = &self
-            .outputs
+        let busy: Vec<usize> = pool
+            .slots
             .iter()
-            .find(|o: &&NamedOutput| o.name.as_deref() == Some(pool.shape.output.as_str()))
-            .with_context(|| format!("no wayland output named {}", pool.shape.output))?
-            .proxy;
-        let manager: &ZwlrScreencopyManagerV1 = self
-            .manager
-            .as_ref()
-            .context("screencopy manager not bound")?;
-        let mode: CopyMode = plan::copy_mode(plan::held(&pool.slots).is_some());
+            .filter_map(|slot: &Slot<ExtImageCopyCaptureFrameV1>| match slot {
+                Slot::Capturing { session, .. } => Some(*session),
+                Slot::Free | Slot::Held { .. } => None,
+            })
+            .collect();
+        let idle: Vec<usize> = (0..pool.sessions.len())
+            .filter(|index: &usize| pool.sessions[*index].ready && !busy.contains(index))
+            .collect();
         let pinned: Vec<bool> = pool
             .surfaces
             .iter()
             .map(|surface: &Surface| Arc::strong_count(&surface.surface) > 1)
             .collect();
-        for index in plan::to_issue(&pool.slots, &pinned, IN_FLIGHT) {
-            pool.slots[index] = Slot::Capturing {
-                frame: manager.capture_output(0, output, qh, index),
-                mode,
-                offer: None,
-            };
+        for (index, session) in plan::to_issue(&pool.slots, &pinned, idle.len())
+            .into_iter()
+            .zip(idle)
+        {
+            let frame: ExtImageCopyCaptureFrameV1 =
+                pool.sessions[session].proxy.create_frame(qh, index);
+            frame.attach_buffer(&pool.surfaces[index].buffer);
+            frame.capture();
+            pool.slots[index] = Slot::Capturing { frame, session };
         }
         Ok(())
     }
@@ -365,88 +422,88 @@ impl State {
         }
     }
 
+    fn session_event(&mut self, index: usize, event: ext_image_copy_capture_session_v1::Event) {
+        let Some(pool) = self.pool.as_mut() else {
+            return;
+        };
+        let Some(session) = pool.sessions.get_mut(index) else {
+            return;
+        };
+        match event {
+            ext_image_copy_capture_session_v1::Event::BufferSize { width, height } => {
+                session.constraints.size = Some((width, height));
+                session.ready = false;
+            }
+            ext_image_copy_capture_session_v1::Event::DmabufFormat { format, modifiers } => {
+                session.ready = false;
+                session.constraints.dmabuf.push((
+                    format,
+                    modifiers
+                        .as_chunks::<8>()
+                        .0
+                        .iter()
+                        .map(|bytes: &[u8; 8]| u64::from_ne_bytes(*bytes))
+                        .collect(),
+                ));
+            }
+            ext_image_copy_capture_session_v1::Event::Done => {
+                let plane: &Dmabuf = pool.surfaces[0].surface.dmabuf();
+                let buffer: Buffer = Buffer {
+                    fourcc: plane.fourcc,
+                    modifier: plane.modifier,
+                    width: plane.width,
+                    height: plane.height,
+                };
+                let constraints: Constraints = std::mem::take(&mut session.constraints);
+                match plan::fits(&constraints, buffer) {
+                    Ok(()) => session.ready = true,
+                    Err(misfit) => self.fatal = Some(misfit.to_string()),
+                }
+            }
+            ext_image_copy_capture_session_v1::Event::Stopped => {
+                self.fatal = Some("the compositor stopped the capture session".to_owned());
+            }
+            ext_image_copy_capture_session_v1::Event::ShmFormat { .. }
+            | ext_image_copy_capture_session_v1::Event::DmabufDevice { .. }
+            | _ => {}
+        }
+    }
+
     fn frame_event(
         &mut self,
         index: usize,
-        frame: &ZwlrScreencopyFrameV1,
-        event: zwlr_screencopy_frame_v1::Event,
+        frame: &ExtImageCopyCaptureFrameV1,
+        event: ext_image_copy_capture_frame_v1::Event,
     ) {
         let Some(pool) = self.pool.as_mut() else {
             return;
         };
-        let (Some(surface), Some(slot)) = (pool.surfaces.get(index), pool.slots.get_mut(index))
-        else {
-            return;
-        };
-        let Slot::Capturing { mode, offer, .. } = slot else {
-            return;
-        };
         match event {
-            zwlr_screencopy_frame_v1::Event::LinuxDmabuf {
-                format,
-                width,
-                height,
-            } => {
-                *offer = Some(Offer {
-                    fourcc: format,
-                    width,
-                    height,
-                });
-            }
-            zwlr_screencopy_frame_v1::Event::Flags {
-                flags: WEnum::Value(flags),
-            } => {
-                if flags.contains(zwlr_screencopy_frame_v1::Flags::YInvert) {
-                    self.fatal = Some(
-                        "compositor sent a y-inverted frame; phonepad would stream it upside down"
-                            .to_owned(),
-                    );
-                }
-            }
-            zwlr_screencopy_frame_v1::Event::BufferDone => {
-                let plane: &Dmabuf = surface.surface.dmabuf();
-                let fits: Offer = Offer {
-                    fourcc: plane.fourcc,
-                    width: plane.width,
-                    height: plane.height,
-                };
-                match *offer {
-                    Some(offered) if offered == fits => match mode {
-                        CopyMode::Immediate => frame.copy(&surface.buffer),
-                        CopyMode::OnDamage => frame.copy_with_damage(&surface.buffer),
-                    },
-                    Some(offered) => {
-                        self.fatal = Some(format!(
-                            "compositor offers dmabuf {offered:?} but the encoder surface is {fits:?}; scaled or rotated outputs are not supported"
-                        ));
-                    }
-                    None => {
-                        self.fatal = Some("compositor offered no dmabuf capture".to_owned());
-                    }
-                }
-            }
-            zwlr_screencopy_frame_v1::Event::Ready {
+            ext_image_copy_capture_frame_v1::Event::PresentationTime {
                 tv_sec_hi,
                 tv_sec_lo,
                 tv_nsec,
             } => {
+                if let Some(presented) = pool.presented.get_mut(index) {
+                    *presented = plan::stamp(tv_sec_hi, tv_sec_lo, tv_nsec);
+                }
+            }
+            ext_image_copy_capture_frame_v1::Event::Ready => {
                 frame.destroy();
-                if plan::arrive(
-                    &mut pool.slots,
-                    index,
-                    plan::stamp(tv_sec_hi, tv_sec_lo, tv_nsec),
-                ) {
+                let stamp: u64 = pool.presented.get(index).copied().unwrap_or(0);
+                if plan::arrive(&mut pool.slots, index, stamp) {
                     pool.new_frame = true;
                 }
             }
-            zwlr_screencopy_frame_v1::Event::Failed => {
+            ext_image_copy_capture_frame_v1::Event::Failed { .. } => {
                 frame.destroy();
-                *slot = Slot::Free;
+                if let Some(slot) = pool.slots.get_mut(index) {
+                    *slot = Slot::Free;
+                }
                 self.failed = true;
             }
-            zwlr_screencopy_frame_v1::Event::Buffer { .. }
-            | zwlr_screencopy_frame_v1::Event::Flags { .. }
-            | zwlr_screencopy_frame_v1::Event::Damage { .. }
+            ext_image_copy_capture_frame_v1::Event::Transform { .. }
+            | ext_image_copy_capture_frame_v1::Event::Damage { .. }
             | _ => {}
         }
     }
