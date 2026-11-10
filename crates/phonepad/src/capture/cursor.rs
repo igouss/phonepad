@@ -52,8 +52,12 @@ impl Sampler {
         if !self.until_due(now).is_zero() {
             return false;
         }
+        self.record(now, hypr::cursor())
+    }
+
+    fn record(&mut self, now: Instant, reading: anyhow::Result<Point>) -> bool {
         self.sampled_at = Some(now);
-        match hypr::cursor() {
+        match reading {
             Ok(at) => {
                 self.failing = false;
                 let moved: bool = self.at != Some(at);
@@ -119,6 +123,89 @@ mod tests {
             until_due(Some(sampled), now, sampled + Duration::from_millis(10)),
             CURSOR_SAMPLE_STILL - Duration::from_millis(10)
         );
+    }
+
+    const HERE: Point = Point { x: 10, y: 20 };
+    const THERE: Point = Point { x: 11, y: 20 };
+
+    #[test]
+    fn a_new_sampler_knows_no_position_and_is_due() {
+        let now: Instant = Instant::now();
+        let sampler: Sampler = Sampler::new(now);
+        assert_eq!(
+            (sampler.at(), sampler.until_due(now)),
+            (None, Duration::ZERO)
+        );
+    }
+
+    #[test]
+    fn the_first_reading_is_a_move_and_waits_one_frame() {
+        let now: Instant = Instant::now();
+        let mut sampler: Sampler = Sampler::new(now);
+        assert_eq!(
+            (
+                sampler.record(now, Ok(HERE)),
+                sampler.at(),
+                sampler.until_due(now)
+            ),
+            (true, Some(HERE), CURSOR_SAMPLE_MOVING)
+        );
+    }
+
+    #[test]
+    fn the_same_reading_again_is_not_a_move() {
+        let now: Instant = Instant::now();
+        let mut sampler: Sampler = Sampler::new(now);
+        sampler.record(now, Ok(HERE));
+        assert!(!sampler.record(now + CURSOR_SETTLE, Ok(HERE)));
+    }
+
+    #[test]
+    fn a_reading_unchanged_past_the_settle_time_slows_sampling() {
+        let now: Instant = Instant::now();
+        let mut sampler: Sampler = Sampler::new(now);
+        sampler.record(now, Ok(HERE));
+        let later: Instant = now + CURSOR_SETTLE;
+        sampler.record(later, Ok(HERE));
+        assert_eq!(sampler.until_due(later), CURSOR_SAMPLE_STILL);
+    }
+
+    #[test]
+    fn a_different_reading_is_a_move_and_restarts_fast_sampling() {
+        let now: Instant = Instant::now();
+        let mut sampler: Sampler = Sampler::new(now);
+        sampler.record(now, Ok(HERE));
+        let later: Instant = now + CURSOR_SETTLE;
+        assert_eq!(
+            (
+                sampler.record(later, Ok(THERE)),
+                sampler.at(),
+                sampler.until_due(later)
+            ),
+            (true, Some(THERE), CURSOR_SAMPLE_MOVING)
+        );
+    }
+
+    #[test]
+    fn a_failed_reading_keeps_the_last_position_and_is_not_a_move() {
+        let now: Instant = Instant::now();
+        let mut sampler: Sampler = Sampler::new(now);
+        sampler.record(now, Ok(HERE));
+        assert_eq!(
+            (
+                sampler.record(now, Err(anyhow::anyhow!("socket gone"))),
+                sampler.at()
+            ),
+            (false, Some(HERE))
+        );
+    }
+
+    #[test]
+    fn a_sampler_not_yet_due_does_not_sample() {
+        let now: Instant = Instant::now();
+        let mut sampler: Sampler = Sampler::new(now);
+        sampler.record(now, Ok(HERE));
+        assert!(!sampler.sample_if_due(now));
     }
 
     #[test]
