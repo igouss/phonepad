@@ -59,6 +59,35 @@ async fn next_unit(units: &mut Option<broadcast::Receiver<Unit>>) -> Result<Unit
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Effect {
+    TellDesk(DeskInput),
+    Inject(InputCommand),
+    Stream(StreamInput),
+    SetView(Option<Size>),
+}
+
+fn effects(message: PhoneMessage, at_ms: u64) -> Vec<Effect> {
+    match message {
+        PhoneMessage::Input(command) => vec![
+            Effect::TellDesk(DeskInput::PhoneInput { at_ms }),
+            Effect::Inject(command),
+        ],
+        PhoneMessage::Visible(visible) => vec![Effect::Stream(StreamInput::Visibility(visible))],
+        PhoneMessage::View(size) => vec![Effect::SetView(size)],
+        PhoneMessage::Ack => vec![Effect::Stream(StreamInput::Ack)],
+        PhoneMessage::Key => vec![Effect::Stream(StreamInput::Missed)],
+    }
+}
+
+fn unit_input(received: &Result<Unit, RecvError>) -> Option<StreamInput> {
+    match received {
+        Ok(unit) => Some(StreamInput::UnitReady(unit.kind)),
+        Err(RecvError::Lagged(_)) => Some(StreamInput::Missed),
+        Err(RecvError::Closed) => None,
+    }
+}
+
 impl Session {
     async fn serve(&mut self) -> anyhow::Result<()> {
         loop {
@@ -69,10 +98,9 @@ impl Session {
                     Some(Ok(Message::Close(_))) | None => return Ok(()),
                     Some(Err(err)) => return Err(err.into()),
                 },
-                received = next_unit(&mut self.units) => match received {
-                    Ok(unit) => self.step(StreamInput::UnitReady(unit.kind), Some(unit.message)).await?,
-                    Err(RecvError::Lagged(_)) => self.step(StreamInput::Missed, None).await?,
-                    Err(RecvError::Closed) => return Err(anyhow!("capture feed closed")),
+                received = next_unit(&mut self.units) => match unit_input(&received) {
+                    Some(input) => self.step(input, received.ok().map(|unit: Unit| unit.message)).await?,
+                    None => return Err(anyhow!("capture feed closed")),
                 },
             }
         }
@@ -80,28 +108,31 @@ impl Session {
 
     async fn on_text(&mut self, text: &str) -> anyhow::Result<()> {
         match wire::parse(text) {
-            Ok(PhoneMessage::Input(command)) => {
-                self.tell_desk(DeskInput::PhoneInput {
-                    at_ms: self.ports.clock.now_ms(),
-                })
-                .await?;
-                self.ports
-                    .input
-                    .send(command)
-                    .await
-                    .map_err(|_| anyhow!("input thread gone"))
-            }
-            Ok(PhoneMessage::Visible(visible)) => {
-                self.step(StreamInput::Visibility(visible), None).await
-            }
-            Ok(PhoneMessage::View(size)) => {
-                self.ports.view.send_replace(size);
+            Ok(message) => {
+                for effect in effects(message, self.ports.clock.now_ms()) {
+                    self.apply(effect).await?;
+                }
                 Ok(())
             }
-            Ok(PhoneMessage::Ack) => self.step(StreamInput::Ack, None).await,
-            Ok(PhoneMessage::Key) => self.step(StreamInput::Missed, None).await,
             Err(err) => {
                 eprintln!("bad message {text:?}: {err}");
+                Ok(())
+            }
+        }
+    }
+
+    async fn apply(&mut self, effect: Effect) -> anyhow::Result<()> {
+        match effect {
+            Effect::TellDesk(input) => self.tell_desk(input).await,
+            Effect::Inject(command) => self
+                .ports
+                .input
+                .send(command)
+                .await
+                .map_err(|_| anyhow!("input thread gone")),
+            Effect::Stream(input) => self.step(input, None).await,
+            Effect::SetView(size) => {
+                self.ports.view.send_replace(size);
                 Ok(())
             }
         }
@@ -152,3 +183,6 @@ impl Session {
             .map_err(|_| anyhow!("desk stopped"))
     }
 }
+
+#[cfg(test)]
+mod tests;
