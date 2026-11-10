@@ -8,6 +8,7 @@ mod mermaid;
 mod profile;
 mod report;
 mod testbed;
+mod transport;
 mod viewer;
 mod views;
 mod workspace;
@@ -20,6 +21,7 @@ use views::VIEWS_DIR;
 const USAGE: &str = "usage: cargo xtask views [--root <dir>] [--out <dir>]\n       cargo xtask check [--root <dir>]\n       cargo xtask h264-check   (needs the Intel iGPU at /dev/dri/renderD128 and the ffmpeg CLI)\n       cargo xtask e2e [--bin <phonepad>]   (needs a live Hyprland session, the iGPU, /dev/uinput and the ffmpeg CLI; serves on port 8769)\n       cargo xtask latency [--bin <phonepad>] [viewer | touch] [nested [hyprland=<binary>] [hz=<rate>]] [port=<port>] [seconds=<s>] <profile>... | calibrate   (needs a live Hyprland session, the iGPU, /dev/uinput and Chromium; serves on port 8771 unless port= names another)
          profiles: lan, wifi, lte, bad-lte, or rtt=<ms>,jitter=<ms>,rate=<Mbit/s>,loss=<%>
          nested: a Hyprland of its own (default /usr/bin/Hyprland) inside the live session, showing only content repainted hz times a second (default 60); not with touch
+       cargo xtask transport calibrate [direct] | [seconds=<s>] [port=<port>] [rounds=<n>] <ws-proxy | wt-relay | ws-direct | wt-direct>... <profile>   (spike: replays a synthetic unit stream over WebSocket and WebTransport through the TCP or UDP emulator, or direct for netem)
        target/debug/xtask profile <pid> <seconds> [--root <dir>]\n         (run the binary directly: a cargo runner with its own PID namespace hides host processes)";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -43,6 +45,9 @@ enum Task {
     Latency {
         bin: Option<PathBuf>,
         plan: latency::Plan,
+    },
+    Transport {
+        plan: transport::Plan,
     },
 }
 
@@ -104,6 +109,9 @@ fn parse(args: &[String]) -> Result<Task, String> {
         (["latency", rest @ ..], None, bin) if root.is_none() => latency::plan(rest)
             .map(|plan: latency::Plan| Task::Latency { bin, plan })
             .map_err(|error: String| format!("{error}\n{USAGE}")),
+        (["transport", rest @ ..], None, None) if root.is_none() => transport::plan(rest)
+            .map(|plan: transport::Plan| Task::Transport { plan })
+            .map_err(|error: String| format!("{error}\n{USAGE}")),
         (["profile", pid, seconds], None, None) => Ok(Task::Profile {
             root,
             pid: number(pid, "pid")?,
@@ -152,6 +160,7 @@ fn run(task: Task) -> Result<bool, String> {
         Task::H264Check => Ok(h264_check::run()),
         Task::E2e { bin } => Ok(e2e::run(bin)),
         Task::Latency { bin, plan } => Ok(latency::run(bin, plan)),
+        Task::Transport { plan } => Ok(transport::run(plan)),
     }
 }
 

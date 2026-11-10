@@ -2,12 +2,12 @@ mod args;
 mod browser;
 mod content;
 mod desk;
-mod link;
+pub mod link;
 mod mover;
 mod nested;
-mod proxy;
+pub mod proxy;
 mod seen;
-mod stats;
+pub mod stats;
 mod touch;
 
 use crate::report::{Check, Report};

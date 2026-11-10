@@ -71,6 +71,10 @@
       },
       {
         "from": "c_xtask",
+        "to": "c_futures_util_0_3_34"
+      },
+      {
+        "from": "c_xtask",
         "to": "c_phonepad_core"
       },
       {
@@ -87,6 +91,14 @@
       },
       {
         "from": "c_xtask",
+        "to": "c_tokio_1_54_1"
+      },
+      {
+        "from": "c_xtask",
+        "to": "c_tokio_tungstenite_0_29_0"
+      },
+      {
+        "from": "c_xtask",
         "to": "c_tungstenite_0_29_0"
       },
       {
@@ -96,6 +108,10 @@
       {
         "from": "c_xtask",
         "to": "c_wayland_protocols_0_32_13"
+      },
+      {
+        "from": "c_xtask",
+        "to": "c_wtransport_0_7_2"
       }
     ],
     "nodes": [
@@ -149,6 +165,11 @@
         "label": "ffmpeg-sys-next 9.0.1"
       },
       {
+        "id": "c_futures_util_0_3_34",
+        "kind": "external",
+        "label": "futures-util 0.3.34"
+      },
+      {
         "id": "c_rustix_1_1_6",
         "kind": "external",
         "label": "rustix 1.1.6"
@@ -174,6 +195,11 @@
         "label": "tokio 1.54.1"
       },
       {
+        "id": "c_tokio_tungstenite_0_29_0",
+        "kind": "external",
+        "label": "tokio-tungstenite 0.29.0"
+      },
+      {
         "id": "c_tungstenite_0_29_0",
         "kind": "external",
         "label": "tungstenite 0.29.0"
@@ -187,6 +213,11 @@
         "id": "c_wayland_protocols_0_32_13",
         "kind": "external",
         "label": "wayland-protocols 0.32.13"
+      },
+      {
+        "id": "c_wtransport_0_7_2",
+        "kind": "external",
+        "label": "wtransport 0.7.2"
       },
       {
         "id": "c_xkbcommon_0_8_0",

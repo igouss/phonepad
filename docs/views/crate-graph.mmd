@@ -10,14 +10,17 @@ flowchart LR
   c_evdev_0_13_2["evdev 0.13.2"]:::external
   c_ffmpeg_next_9_0_0["ffmpeg-next 9.0.0"]:::external
   c_ffmpeg_sys_next_9_0_1["ffmpeg-sys-next 9.0.1"]:::external
+  c_futures_util_0_3_34["futures-util 0.3.34"]:::external
   c_rustix_1_1_6["rustix 1.1.6"]:::external
   c_serde_1_0_229["serde 1.0.229"]:::external
   c_serde_json_1_0_154["serde_json 1.0.154"]:::external
   c_thiserror_2_0_21["thiserror 2.0.21"]:::external
   c_tokio_1_54_1["tokio 1.54.1"]:::external
+  c_tokio_tungstenite_0_29_0["tokio-tungstenite 0.29.0"]:::external
   c_tungstenite_0_29_0["tungstenite 0.29.0"]:::external
   c_wayland_client_0_31_15["wayland-client 0.31.15"]:::external
   c_wayland_protocols_0_32_13["wayland-protocols 0.32.13"]:::external
+  c_wtransport_0_7_2["wtransport 0.7.2"]:::external
   c_xkbcommon_0_8_0["xkbcommon 0.8.0"]:::external
   c_phonepad --> c_anyhow_1_0_104
   c_phonepad --> c_axum_0_8_9
@@ -36,10 +39,14 @@ flowchart LR
   c_phonepad_h264 --> c_ffmpeg_sys_next_9_0_1
   c_phonepad_h264 --> c_thiserror_2_0_21
   c_xtask --> c_evdev_0_13_2
+  c_xtask --> c_futures_util_0_3_34
   c_xtask --> c_phonepad_core
   c_xtask --> c_phonepad_h264
   c_xtask --> c_rustix_1_1_6
   c_xtask --> c_serde_json_1_0_154
+  c_xtask --> c_tokio_1_54_1
+  c_xtask --> c_tokio_tungstenite_0_29_0
   c_xtask --> c_tungstenite_0_29_0
   c_xtask --> c_wayland_client_0_31_15
   c_xtask --> c_wayland_protocols_0_32_13
+  c_xtask --> c_wtransport_0_7_2
