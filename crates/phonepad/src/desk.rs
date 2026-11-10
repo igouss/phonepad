@@ -17,11 +17,13 @@ const LOCAL_MOUSE_POLL: Duration = Duration::from_millis(100);
 const QUEUE: usize = 64;
 const CAPTURE_STOP_BOUND: Duration = Duration::from_secs(1);
 const CAPTURE_RESTART_BACKOFF: Duration = Duration::from_secs(1);
+const WALLPAPER_WATCH: Duration = Duration::from_secs(2);
 
 pub enum DeskMessage {
     Input(DeskInput),
     CaptureExited(u64),
     RestartCapture,
+    WallpaperTick,
     Shutdown(oneshot::Sender<()>),
 }
 
@@ -42,6 +44,7 @@ pub struct DeskShell {
     capture: Option<RunningCapture>,
     capture_generation: u64,
     local_mouse_watch: Option<JoinHandle<()>>,
+    wallpaper_watch: Option<JoinHandle<()>>,
     pointer: PointerStyle,
     wallpaper: WallpaperShell,
     clock: Clock,
@@ -57,6 +60,7 @@ pub fn spawn(pointer: PointerStyle, clock: Clock, feed: Feed) -> mpsc::Sender<De
         capture: None,
         capture_generation: 0,
         local_mouse_watch: None,
+        wallpaper_watch: None,
         pointer,
         wallpaper: WallpaperShell::from_env(),
         clock,
@@ -76,6 +80,7 @@ impl DeskShell {
                 DeskMessage::Input(input) => self.step(input).await,
                 DeskMessage::CaptureExited(generation) => self.capture_exited(generation).await,
                 DeskMessage::RestartCapture => self.restart_capture(),
+                DeskMessage::WallpaperTick => self.wallpaper.tick().await,
                 DeskMessage::Shutdown(done) => {
                     self.shutdown().await;
                     let _ = done.send(());
@@ -98,6 +103,7 @@ impl DeskShell {
             DeskCommand::StartCapture => {
                 self.start_capture();
                 self.wallpaper.capture_started().await;
+                self.start_wallpaper_watch();
             }
             DeskCommand::StopCapture => self.stop_capture().await,
             DeskCommand::SetPointer(size) => self.set_pointer(size).await,
@@ -126,6 +132,9 @@ impl DeskShell {
     }
 
     async fn stop_capture(&mut self) {
+        if let Some(watch) = self.wallpaper_watch.take() {
+            watch.abort();
+        }
         if let Some(running) = self.capture.take() {
             join_bounded(running.capture).await;
         }
@@ -171,6 +180,13 @@ impl DeskShell {
         run("hyprctl", &["setcursor", &self.pointer.theme, &pixels]).await;
     }
 
+    fn start_wallpaper_watch(&mut self) {
+        if let Some(watch) = self.wallpaper_watch.take() {
+            watch.abort();
+        }
+        self.wallpaper_watch = Some(tokio::spawn(watch_wallpaper(self.inbox.clone())));
+    }
+
     fn start_local_mouse_watch(&mut self) {
         self.stop_local_mouse_watch();
         self.local_mouse_watch = Some(tokio::spawn(watch_local_mouse(
@@ -205,6 +221,18 @@ async fn join_bounded(capture: Capture) {
         Ok(Err(err)) => eprintln!("capture: join task failed: {err}"),
         Err(_) => {
             eprintln!("capture: thread still running {CAPTURE_STOP_BOUND:?} after stop; detached")
+        }
+    }
+}
+
+async fn watch_wallpaper(inbox: mpsc::Sender<DeskMessage>) {
+    let mut ticks: Interval =
+        time::interval_at(time::Instant::now() + WALLPAPER_WATCH, WALLPAPER_WATCH);
+    ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    loop {
+        ticks.tick().await;
+        if inbox.send(DeskMessage::WallpaperTick).await.is_err() {
+            return;
         }
     }
 }

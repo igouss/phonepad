@@ -905,50 +905,186 @@
     "wallpaper": {
       "states": [
         {
-          "id": "s_Untouched",
-          "label": "Untouched"
+          "id": "s_Idle",
+          "label": "Idle"
         },
         {
-          "id": "s_PausedByUs",
-          "label": "PausedByUs"
+          "id": "s_Yielded",
+          "label": "Yielded"
+        },
+        {
+          "id": "s_Held",
+          "label": "Held"
         }
       ],
       "transitions": [
         {
           "commands": [
             "Resume",
-            "RemoveMarker"
+            "ClearMarker"
           ],
-          "from": "s_Untouched",
-          "input": "Startup { marker_present: true }",
-          "to": "s_Untouched"
+          "from": "s_Idle",
+          "input": "Startup { marker: Stale }",
+          "to": "s_Idle"
         },
         {
           "commands": [
-            "WriteMarker",
+            "TakeMarker",
             "Pause"
           ],
-          "from": "s_Untouched",
-          "input": "CaptureStarted { manual_pause: false }",
-          "to": "s_PausedByUs"
+          "from": "s_Idle",
+          "input": "CaptureStarted(Observation { manual_pause: false, marker: Absent })",
+          "to": "s_Held"
         },
         {
           "commands": [
-            "Resume",
-            "RemoveMarker"
+            "TakeMarker",
+            "Pause"
           ],
-          "from": "s_PausedByUs",
-          "input": "Startup { marker_present: true }",
-          "to": "s_Untouched"
+          "from": "s_Idle",
+          "input": "CaptureStarted(Observation { manual_pause: false, marker: Stale })",
+          "to": "s_Held"
+        },
+        {
+          "commands": [],
+          "from": "s_Idle",
+          "input": "CaptureStarted(Observation { manual_pause: false, marker: Live })",
+          "to": "s_Yielded"
+        },
+        {
+          "commands": [],
+          "from": "s_Idle",
+          "input": "CaptureStarted(Observation { manual_pause: true, marker: Absent })",
+          "to": "s_Yielded"
         },
         {
           "commands": [
-            "Resume",
-            "RemoveMarker"
+            "TakeMarker"
           ],
-          "from": "s_PausedByUs",
+          "from": "s_Idle",
+          "input": "CaptureStarted(Observation { manual_pause: true, marker: Stale })",
+          "to": "s_Held"
+        },
+        {
+          "commands": [],
+          "from": "s_Idle",
+          "input": "CaptureStarted(Observation { manual_pause: true, marker: Live })",
+          "to": "s_Yielded"
+        },
+        {
+          "commands": [
+            "TakeMarker",
+            "Pause"
+          ],
+          "from": "s_Yielded",
+          "input": "CaptureStarted(Observation { manual_pause: false, marker: Absent })",
+          "to": "s_Held"
+        },
+        {
+          "commands": [
+            "TakeMarker",
+            "Pause"
+          ],
+          "from": "s_Yielded",
+          "input": "CaptureStarted(Observation { manual_pause: false, marker: Stale })",
+          "to": "s_Held"
+        },
+        {
+          "commands": [
+            "TakeMarker"
+          ],
+          "from": "s_Yielded",
+          "input": "CaptureStarted(Observation { manual_pause: true, marker: Stale })",
+          "to": "s_Held"
+        },
+        {
+          "commands": [
+            "TakeMarker",
+            "Pause"
+          ],
+          "from": "s_Yielded",
+          "input": "Observed(Observation { manual_pause: false, marker: Absent })",
+          "to": "s_Held"
+        },
+        {
+          "commands": [
+            "TakeMarker",
+            "Pause"
+          ],
+          "from": "s_Yielded",
+          "input": "Observed(Observation { manual_pause: false, marker: Stale })",
+          "to": "s_Held"
+        },
+        {
+          "commands": [
+            "TakeMarker"
+          ],
+          "from": "s_Yielded",
+          "input": "Observed(Observation { manual_pause: true, marker: Stale })",
+          "to": "s_Held"
+        },
+        {
+          "commands": [],
+          "from": "s_Yielded",
           "input": "CaptureStopped",
-          "to": "s_Untouched"
+          "to": "s_Idle"
+        },
+        {
+          "commands": [
+            "Pause"
+          ],
+          "from": "s_Held",
+          "input": "CaptureStarted(Observation { manual_pause: false, marker: Absent })",
+          "to": "s_Held"
+        },
+        {
+          "commands": [
+            "Pause"
+          ],
+          "from": "s_Held",
+          "input": "CaptureStarted(Observation { manual_pause: false, marker: Stale })",
+          "to": "s_Held"
+        },
+        {
+          "commands": [
+            "Pause"
+          ],
+          "from": "s_Held",
+          "input": "CaptureStarted(Observation { manual_pause: false, marker: Live })",
+          "to": "s_Held"
+        },
+        {
+          "commands": [
+            "Pause"
+          ],
+          "from": "s_Held",
+          "input": "Observed(Observation { manual_pause: false, marker: Absent })",
+          "to": "s_Held"
+        },
+        {
+          "commands": [
+            "Pause"
+          ],
+          "from": "s_Held",
+          "input": "Observed(Observation { manual_pause: false, marker: Stale })",
+          "to": "s_Held"
+        },
+        {
+          "commands": [
+            "Pause"
+          ],
+          "from": "s_Held",
+          "input": "Observed(Observation { manual_pause: false, marker: Live })",
+          "to": "s_Held"
+        },
+        {
+          "commands": [
+            "Resume",
+            "ClearMarker"
+          ],
+          "from": "s_Held",
+          "input": "CaptureStopped",
+          "to": "s_Idle"
         }
       ]
     }

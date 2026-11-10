@@ -1,7 +1,25 @@
 stateDiagram-v2
-  state "Untouched" as s_Untouched
-  state "PausedByUs" as s_PausedByUs
-  s_Untouched --> s_Untouched : Startup { marker_present: true } / Resume, RemoveMarker
-  s_Untouched --> s_PausedByUs : CaptureStarted { manual_pause: false } / WriteMarker, Pause
-  s_PausedByUs --> s_Untouched : Startup { marker_present: true } / Resume, RemoveMarker
-  s_PausedByUs --> s_Untouched : CaptureStopped / Resume, RemoveMarker
+  state "Idle" as s_Idle
+  state "Yielded" as s_Yielded
+  state "Held" as s_Held
+  s_Idle --> s_Idle : Startup { marker: Stale } / Resume, ClearMarker
+  s_Idle --> s_Held : CaptureStarted(Observation { manual_pause: false, marker: Absent }) / TakeMarker, Pause
+  s_Idle --> s_Held : CaptureStarted(Observation { manual_pause: false, marker: Stale }) / TakeMarker, Pause
+  s_Idle --> s_Yielded : CaptureStarted(Observation { manual_pause: false, marker: Live })
+  s_Idle --> s_Yielded : CaptureStarted(Observation { manual_pause: true, marker: Absent })
+  s_Idle --> s_Held : CaptureStarted(Observation { manual_pause: true, marker: Stale }) / TakeMarker
+  s_Idle --> s_Yielded : CaptureStarted(Observation { manual_pause: true, marker: Live })
+  s_Yielded --> s_Held : CaptureStarted(Observation { manual_pause: false, marker: Absent }) / TakeMarker, Pause
+  s_Yielded --> s_Held : CaptureStarted(Observation { manual_pause: false, marker: Stale }) / TakeMarker, Pause
+  s_Yielded --> s_Held : CaptureStarted(Observation { manual_pause: true, marker: Stale }) / TakeMarker
+  s_Yielded --> s_Held : Observed(Observation { manual_pause: false, marker: Absent }) / TakeMarker, Pause
+  s_Yielded --> s_Held : Observed(Observation { manual_pause: false, marker: Stale }) / TakeMarker, Pause
+  s_Yielded --> s_Held : Observed(Observation { manual_pause: true, marker: Stale }) / TakeMarker
+  s_Yielded --> s_Idle : CaptureStopped
+  s_Held --> s_Held : CaptureStarted(Observation { manual_pause: false, marker: Absent }) / Pause
+  s_Held --> s_Held : CaptureStarted(Observation { manual_pause: false, marker: Stale }) / Pause
+  s_Held --> s_Held : CaptureStarted(Observation { manual_pause: false, marker: Live }) / Pause
+  s_Held --> s_Held : Observed(Observation { manual_pause: false, marker: Absent }) / Pause
+  s_Held --> s_Held : Observed(Observation { manual_pause: false, marker: Stale }) / Pause
+  s_Held --> s_Held : Observed(Observation { manual_pause: false, marker: Live }) / Pause
+  s_Held --> s_Idle : CaptureStopped / Resume, ClearMarker
