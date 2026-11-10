@@ -72,8 +72,8 @@ fn a_delta_first_is_remembered_after_a_later_key() {
 }
 
 #[test]
-fn a_bare_header_is_a_cursor_message() {
-    assert_eq!(tally(&[message(&[])], 0).cursors, 1);
+fn a_bare_header_without_a_unit_is_malformed() {
+    assert_eq!(tally(&[message(&[])], 0).malformed, 1);
 }
 
 #[test]
@@ -83,7 +83,7 @@ fn a_message_shorter_than_the_header_is_malformed() {
 
 #[test]
 fn text_messages_count_as_malformed() {
-    assert_eq!(tally(&[message(&[])], 2).malformed, 2);
+    assert_eq!(tally(&[message(&IDR)], 2).malformed, 2);
 }
 
 #[test]

@@ -12,7 +12,6 @@ pub const HEADER: usize = 16;
 pub struct Tally {
     pub units: usize,
     pub keys: usize,
-    pub cursors: usize,
     pub malformed: usize,
     pub first_unit_key: Option<bool>,
     pub stream: Vec<u8>,
@@ -40,8 +39,7 @@ pub fn tally(binary: &[Vec<u8>], texts: usize) -> Tally {
         },
         |mut tally: Tally, payload: &Vec<u8>| {
             match payload.get(HEADER..) {
-                None => tally.malformed += 1,
-                Some([]) => tally.cursors += 1,
+                None | Some([]) => tally.malformed += 1,
                 Some(unit) => {
                     let key: bool = nal::contains_idr(unit);
                     tally.first_unit_key.get_or_insert(key);
@@ -80,11 +78,10 @@ pub fn viewer_checks(
             gate: format!("{label} units"),
             ok: tally.units > 0 && tally.malformed == 0,
             detail: format!(
-                "{} units ({rate:.1}/s, {} keyframes, {} bytes), {} cursor-only, {} malformed messages",
+                "{} units ({rate:.1}/s, {} keyframes, {} bytes), {} malformed messages",
                 tally.units,
                 tally.keys,
                 tally.stream.len(),
-                tally.cursors,
                 tally.malformed
             ),
         },
