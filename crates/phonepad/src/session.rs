@@ -3,7 +3,7 @@ use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket};
 use phonepad_core::decision::Decision;
 use phonepad_core::desk::DeskInput;
-use phonepad_core::geometry::Size;
+use phonepad_core::geometry::{Point, Size};
 use phonepad_core::input::InputCommand;
 use phonepad_core::stream::{self, Stream, StreamCommand, StreamEvent, StreamInput};
 use tokio::sync::broadcast::error::RecvError;
@@ -22,6 +22,7 @@ pub struct SessionPorts {
     pub units: broadcast::Sender<Unit>,
     pub keyframe: KeyframeRequest,
     pub view: watch::Sender<Option<Size>>,
+    pub cursor: watch::Sender<Option<Point>>,
     pub clock: Clock,
 }
 
@@ -29,6 +30,7 @@ struct Session {
     socket: WebSocket,
     stream: Stream,
     units: Option<broadcast::Receiver<Unit>>,
+    cursor: Option<watch::Receiver<Option<Point>>>,
     ports: SessionPorts,
 }
 
@@ -37,6 +39,7 @@ pub async fn run(socket: WebSocket, ports: SessionPorts) {
         socket,
         stream: Stream::Hidden,
         units: None,
+        cursor: None,
         ports,
     };
     if let Err(err) = session.serve().await {
@@ -55,6 +58,16 @@ pub async fn run(socket: WebSocket, ports: SessionPorts) {
 async fn next_unit(units: &mut Option<broadcast::Receiver<Unit>>) -> Result<Unit, RecvError> {
     match units {
         Some(units) => units.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn next_cursor(cursor: &mut Option<watch::Receiver<Option<Point>>>) -> Option<Point> {
+    match cursor {
+        Some(cursor) => match cursor.changed().await {
+            Ok(()) => *cursor.borrow_and_update(),
+            Err(_) => std::future::pending().await,
+        },
         None => std::future::pending().await,
     }
 }
@@ -102,6 +115,7 @@ impl Session {
                     Some(input) => self.step(input, received.ok().map(|unit: Unit| unit.message)).await?,
                     None => return Err(anyhow!("capture feed closed")),
                 },
+                Some(at) = next_cursor(&mut self.cursor) => self.send_cursor(at).await?,
             }
         }
     }
@@ -155,10 +169,17 @@ impl Session {
         match command {
             StreamCommand::JoinViewers => {
                 self.units = Some(self.ports.units.subscribe());
+                let mut cursor: watch::Receiver<Option<Point>> = self.ports.cursor.subscribe();
+                let current: Option<Point> = *cursor.borrow_and_update();
+                self.cursor = Some(cursor);
+                if let Some(at) = current {
+                    self.send_cursor(at).await?;
+                }
                 self.tell_desk(DeskInput::ViewerJoined).await
             }
             StreamCommand::LeaveViewers => {
                 self.units = None;
+                self.cursor = None;
                 self.tell_desk(DeskInput::ViewerLeft).await
             }
             StreamCommand::RequestKeyframe => {
@@ -173,6 +194,13 @@ impl Session {
                 Ok(())
             }
         }
+    }
+
+    async fn send_cursor(&mut self, at: Point) -> anyhow::Result<()> {
+        self.socket
+            .send(Message::Binary(Bytes::from(wire::cursor_message(at))))
+            .await?;
+        Ok(())
     }
 
     async fn tell_desk(&mut self, input: DeskInput) -> anyhow::Result<()> {

@@ -58,7 +58,7 @@ function connect() {
   ws.binaryType = "arraybuffer";
   ws.onopen = () => { status.textContent = "connected"; restart(); sendView(); sendVisible(); };
   ws.onclose = () => { status.textContent = "disconnected"; setTimeout(connect, 1000); };
-  ws.onmessage = ev => { if (ev.data instanceof ArrayBuffer) onUnit(ev.data); };
+  ws.onmessage = ev => { if (ev.data instanceof ArrayBuffer) onMessage(ev.data); };
 }
 const send = m => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); };
 function sendVisible() { send({ t: "visible", v: document.visibilityState === "visible" }); }
@@ -67,6 +67,7 @@ function sendView() {
   view.width = Math.round(r.width * devicePixelRatio);
   view.height = Math.round(r.height * devicePixelRatio);
   send({ t: "view", w: Math.round(r.width * zoom), h: Math.round(r.height * zoom) });
+  repaint();
 }
 let decoder = null, spsId = null, needKey = true, stamp = 0;
 const heads = [];
@@ -83,23 +84,38 @@ function nals(b) {
   if (start >= 0) close(b.length);
   return out;
 }
-function paint(img, w, h, rx, ry, cx, cy) {
-  const W = view.width, H = view.height;
-  const s = Math.min(W / w, H / h);
-  const ox = (W - w * s) / 2, oy = (H - h * s) / 2;
+const shot = document.createElement("canvas");
+const shotCtx = shot.getContext("2d");
+let win = null, cur = null, painting = false;
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(v, hi));
+function paint() {
+  painting = false;
+  if (!win || !cur) return;
+  const W = view.width, H = view.height, r = pad.getBoundingClientRect();
+  const vw = Math.min(Math.round(r.width * zoom), win.w), vh = Math.min(Math.round(r.height * zoom), win.h);
+  const vx = clamp(cur.x - Math.floor(vw / 2), win.x, win.x + win.w - vw);
+  const vy = clamp(cur.y - Math.floor(vh / 2), win.y, win.y + win.h - vh);
+  const s = Math.min(W / vw, H / vh);
+  const ox = (W - vw * s) / 2, oy = (H - vh * s) / 2;
   ctx.fillStyle = "#1b1b1b"; ctx.fillRect(0, 0, W, H);
-  ctx.drawImage(img, ox, oy, w * s, h * s);
-  const px = ox + (cx - rx) * s, py = oy + (cy - ry) * s, rad = 14 * devicePixelRatio;
+  ctx.drawImage(shot, vx - win.x, vy - win.y, vw, vh, ox, oy, vw * s, vh * s);
+  const px = ox + (cur.x - vx) * s, py = oy + (cur.y - vy) * s, rad = 14 * devicePixelRatio;
   ctx.lineWidth = 5 * devicePixelRatio; ctx.strokeStyle = "rgba(0,0,0,.7)";
   ctx.beginPath(); ctx.arc(px, py, rad, 0, 2 * Math.PI); ctx.stroke();
   ctx.lineWidth = 2.5 * devicePixelRatio; ctx.strokeStyle = "#3d6";
   ctx.beginPath(); ctx.arc(px, py, rad, 0, 2 * Math.PI); ctx.stroke();
 }
+function repaint() { if (!painting) { painting = true; requestAnimationFrame(paint); } }
 function output(frame) {
   try {
     let head = null;
     while (heads.length && heads[0].ts <= frame.timestamp) { head = heads.shift(); ack(); }
-    if (head) paint(frame, frame.displayWidth, frame.displayHeight, head.rx, head.ry, head.cx, head.cy);
+    if (head) {
+      if (shot.width !== frame.displayWidth || shot.height !== frame.displayHeight) { shot.width = frame.displayWidth; shot.height = frame.displayHeight; }
+      shotCtx.drawImage(frame, 0, 0);
+      win = { x: head.wx, y: head.wy, w: frame.displayWidth, h: frame.displayHeight };
+      repaint();
+    }
   } finally {
     frame.close();
   }
@@ -120,10 +136,11 @@ function configure(sps, id) {
   decoder.configure({ codec: "avc1." + hex(sps[1]) + hex(sps[2]) + hex(sps[3]), optimizeForLatency: true, hardwareAcceleration: "prefer-hardware" });
   spsId = id; needKey = true;
 }
-function onUnit(buf) {
-  const h = new DataView(buf, 0, 16);
-  const head = { rx: h.getInt32(0), ry: h.getInt32(4), cx: h.getInt32(8), cy: h.getInt32(12), ts: stamp };
-  const au = new Uint8Array(buf, 16);
+function onMessage(buf) {
+  const h = new DataView(buf, 0, 9);
+  if (h.getUint8(0) === 1) { cur = { x: h.getInt32(1), y: h.getInt32(5) }; repaint(); return; }
+  const head = { wx: h.getInt32(1), wy: h.getInt32(5), ts: stamp };
+  const au = new Uint8Array(buf, 9);
   const units = nals(au);
   const key = units.some(n => (n[0] & 31) === 5);
   const sps = units.find(n => (n[0] & 31) === 7);

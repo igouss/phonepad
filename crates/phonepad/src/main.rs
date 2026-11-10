@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use anyhow::{Context, anyhow};
 use axum::serve::ListenerExt;
-use phonepad_core::geometry::Size;
+use phonepad_core::geometry::{Point, Size};
 use phonepad_core::input::InputCommand;
 use tokio::net::TcpListener;
 use tokio::runtime::{self, Runtime};
@@ -63,10 +63,12 @@ async fn serve() -> anyhow::Result<()> {
     let (units, _): (broadcast::Sender<Unit>, broadcast::Receiver<Unit>) =
         broadcast::channel(UNIT_BACKLOG);
     let keyframe: KeyframeRequest = KeyframeRequest::default();
+    let cursor: watch::Sender<Option<Point>> = watch::Sender::new(None);
     let feed: Feed = Feed {
         render_node: env::var_os("PHONEPAD_RENDER_NODE")
             .map_or_else(|| PathBuf::from(DEFAULT_RENDER_NODE), PathBuf::from),
         view: view_watch,
+        cursor: cursor.clone(),
         units: units.clone(),
         keyframe: keyframe.clone(),
     };
@@ -86,6 +88,7 @@ async fn serve() -> anyhow::Result<()> {
         units,
         keyframe,
         view,
+        cursor,
         clock,
     };
 

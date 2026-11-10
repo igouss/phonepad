@@ -6,13 +6,16 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::time::Duration;
 
-pub const HEADER: usize = 16;
+pub const HEADER: usize = 9;
+pub const FRAME_TAG: u8 = 0;
+pub const CURSOR_TAG: u8 = 1;
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Tally {
     pub units: usize,
     pub keys: usize,
     pub malformed: usize,
+    pub cursors: usize,
     pub first_unit_key: Option<bool>,
     pub stream: Vec<u8>,
 }
@@ -38,15 +41,16 @@ pub fn tally(binary: &[Vec<u8>], texts: usize) -> Tally {
             ..Tally::default()
         },
         |mut tally: Tally, payload: &Vec<u8>| {
-            match payload.get(HEADER..) {
-                None | Some([]) => tally.malformed += 1,
-                Some(unit) => {
+            match (payload.first(), payload.get(HEADER..)) {
+                (Some(&CURSOR_TAG), Some([])) => tally.cursors += 1,
+                (Some(&FRAME_TAG), Some(unit)) if !unit.is_empty() => {
                     let key: bool = nal::contains_idr(unit);
                     tally.first_unit_key.get_or_insert(key);
                     tally.units += 1;
                     tally.keys += usize::from(key);
                     tally.stream.extend_from_slice(unit);
                 }
+                (None | Some(_), None | Some(_)) => tally.malformed += 1,
             }
             tally
         },
@@ -78,10 +82,11 @@ pub fn viewer_checks(
             gate: format!("{label} units"),
             ok: tally.units > 0 && tally.malformed == 0,
             detail: format!(
-                "{} units ({rate:.1}/s, {} keyframes, {} bytes), {} malformed messages",
+                "{} units ({rate:.1}/s, {} keyframes, {} bytes), {} pointer messages, {} malformed messages",
                 tally.units,
                 tally.keys,
                 tally.stream.len(),
+                tally.cursors,
                 tally.malformed
             ),
         },

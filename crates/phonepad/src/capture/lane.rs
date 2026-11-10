@@ -109,11 +109,7 @@ fn encode_all(
         } else {
             UnitKind::Delta
         };
-        let message: Bytes = Bytes::from(wire::frame_message(
-            job.shot.region,
-            job.shot.cursor,
-            &unit.data,
-        ));
+        let message: Bytes = Bytes::from(wire::frame_message(job.shot.window, &unit.data));
         let _no_viewer_subscribed: Result<usize, broadcast::error::SendError<Unit>> =
             units.send(Unit { kind, message });
     }

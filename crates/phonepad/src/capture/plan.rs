@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use phonepad_core::geometry::{Monitor, Point, Region, Size, region_around};
+use phonepad_core::geometry::{Monitor, Point, Region, Size, window_around};
 
 pub(super) const MIN_ENCODE_INTERVAL: Duration = Duration::from_micros(16_667);
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
@@ -15,20 +15,20 @@ pub(super) struct Pixels {
 pub(super) struct Shape {
     pub(super) output: String,
     pub(super) source: Pixels,
-    pub(super) view: Pixels,
+    pub(super) window: Pixels,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Shot {
     pub(super) crop: (u32, u32),
-    pub(super) region: Point,
-    pub(super) cursor: Point,
+    pub(super) window: Point,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Target {
     pub(super) shape: Shape,
     pub(super) shot: Shot,
+    pub(super) window: Region,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,25 +79,30 @@ fn pixels(size: Size) -> Pixels {
     }
 }
 
-pub(super) fn target(cursor: Point, view: Size, monitors: &[Monitor]) -> Option<Target> {
-    let region: Region = region_around(cursor, view, monitors)?;
+pub(super) fn target(
+    cursor: Point,
+    view: Size,
+    monitors: &[Monitor],
+    kept: Option<&Region>,
+) -> Option<Target> {
+    let window: Region = window_around(cursor, view, monitors, kept)?;
     let monitor: &Monitor = monitors
         .iter()
-        .find(|m: &&Monitor| m.name == region.output)?;
+        .find(|m: &&Monitor| m.name == window.output)?;
     Some(Target {
         shape: Shape {
-            output: region.output,
+            output: window.output.clone(),
             source: pixels(monitor.size),
-            view: pixels(region.size),
+            window: pixels(window.size),
         },
         shot: Shot {
             crop: (
-                u32::try_from(region.local.x).ok()?,
-                u32::try_from(region.local.y).ok()?,
+                u32::try_from(window.local.x).ok()?,
+                u32::try_from(window.local.y).ok()?,
             ),
-            region: region.global,
-            cursor,
+            window: window.global,
         },
+        window,
     })
 }
 
@@ -188,13 +193,11 @@ mod tests {
 
     const HERE: Shot = Shot {
         crop: (100, 200),
-        region: Point { x: 100, y: 200 },
-        cursor: Point { x: 400, y: 500 },
+        window: Point { x: 100, y: 200 },
     };
     const THERE: Shot = Shot {
         crop: (102, 200),
-        region: Point { x: 102, y: 200 },
-        cursor: Point { x: 402, y: 500 },
+        window: Point { x: 102, y: 200 },
     };
     const QUIET: Pending = Pending {
         new_frame: false,
@@ -240,16 +243,35 @@ mod tests {
 
     #[test]
     fn no_monitor_has_no_target() {
-        assert_eq!(target(Point { x: 0, y: 0 }, size(640, 480), &[]), None);
+        assert_eq!(
+            target(Point { x: 0, y: 0 }, size(640, 480), &[], None),
+            None
+        );
+    }
+
+    fn window(output: &str, global: (i32, i32), local: (i32, i32)) -> Region {
+        Region {
+            output: output.to_owned(),
+            global: Point {
+                x: global.0,
+                y: global.1,
+            },
+            local: Point {
+                x: local.0,
+                y: local.1,
+            },
+            size: size(960, 720),
+        }
     }
 
     #[test]
-    fn target_on_one_monitor_crops_around_the_cursor() {
+    fn target_on_one_monitor_crops_a_window_around_the_cursor() {
         assert_eq!(
             target(
                 Point { x: 1000, y: 500 },
                 size(640, 480),
-                &[monitor("A", 0, 1920, 1080)]
+                &[monitor("A", 0, 1920, 1080)],
+                None
             ),
             Some(Target {
                 shape: Shape {
@@ -258,16 +280,16 @@ mod tests {
                         width: 1920,
                         height: 1080
                     },
-                    view: Pixels {
-                        width: 640,
-                        height: 480
+                    window: Pixels {
+                        width: 960,
+                        height: 720
                     },
                 },
                 shot: Shot {
-                    crop: (680, 260),
-                    region: Point { x: 680, y: 260 },
-                    cursor: Point { x: 1000, y: 500 },
+                    crop: (520, 140),
+                    window: Point { x: 520, y: 140 },
                 },
+                window: window("A", (520, 140), (520, 140)),
             })
         );
     }
@@ -278,7 +300,8 @@ mod tests {
             target(
                 Point { x: 3000, y: 500 },
                 size(640, 480),
-                &[monitor("A", 0, 1920, 1080), monitor("B", 1920, 2560, 1440)]
+                &[monitor("A", 0, 1920, 1080), monitor("B", 1920, 2560, 1440)],
+                None
             ),
             Some(Target {
                 shape: Shape {
@@ -287,16 +310,34 @@ mod tests {
                         width: 2560,
                         height: 1440
                     },
-                    view: Pixels {
-                        width: 640,
-                        height: 480
+                    window: Pixels {
+                        width: 960,
+                        height: 720
                     },
                 },
                 shot: Shot {
-                    crop: (760, 260),
-                    region: Point { x: 2680, y: 260 },
-                    cursor: Point { x: 3000, y: 500 },
+                    crop: (600, 140),
+                    window: Point { x: 2520, y: 140 },
                 },
+                window: window("B", (2520, 140), (600, 140)),
+            })
+        );
+    }
+
+    #[test]
+    fn a_pointer_moving_inside_the_kept_window_keeps_the_shot() {
+        let kept: Region = window("A", (520, 140), (520, 140));
+        assert_eq!(
+            target(
+                Point { x: 1100, y: 520 },
+                size(640, 480),
+                &[monitor("A", 0, 1920, 1080)],
+                Some(&kept)
+            )
+            .map(|t: Target| t.shot),
+            Some(Shot {
+                crop: (520, 140),
+                window: Point { x: 520, y: 140 },
             })
         );
     }

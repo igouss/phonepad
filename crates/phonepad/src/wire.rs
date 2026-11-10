@@ -76,12 +76,23 @@ pub fn key_code(name: &str) -> Result<u16, WireError> {
         .ok_or_else(|| WireError::UnknownKey(name.to_owned()))
 }
 
-pub fn frame_message(region: Point, cursor: Point, unit: &[u8]) -> Vec<u8> {
-    [region.x, region.y, cursor.x, cursor.y]
-        .iter()
-        .flat_map(|value: &i32| value.to_be_bytes())
-        .chain(unit.iter().copied())
+const FRAME_TAG: u8 = 0;
+const CURSOR_TAG: u8 = 1;
+
+fn tagged(tag: u8, at: Point, rest: &[u8]) -> Vec<u8> {
+    std::iter::once(tag)
+        .chain(at.x.to_be_bytes())
+        .chain(at.y.to_be_bytes())
+        .chain(rest.iter().copied())
         .collect()
+}
+
+pub fn frame_message(window: Point, unit: &[u8]) -> Vec<u8> {
+    tagged(FRAME_TAG, window, unit)
+}
+
+pub fn cursor_message(cursor: Point) -> Vec<u8> {
+    tagged(CURSOR_TAG, cursor, &[])
 }
 
 fn button(wire: WireButton) -> Button {
@@ -304,16 +315,18 @@ mod tests {
     }
 
     #[test]
-    fn frame_header_is_four_big_endian_words_before_the_access_unit() {
+    fn a_frame_is_tag_zero_and_the_window_origin_before_the_access_unit() {
         assert_eq!(
-            frame_message(
-                Point { x: 1, y: -2 },
-                Point { x: 258, y: 3 },
-                &[0, 0, 1, 0x65]
-            ),
-            vec![
-                0, 0, 0, 1, 0xFF, 0xFF, 0xFF, 0xFE, 0, 0, 1, 2, 0, 0, 0, 3, 0, 0, 1, 0x65
-            ]
+            frame_message(Point { x: 1, y: -2 }, &[0, 0, 1, 0x65]),
+            vec![0, 0, 0, 0, 1, 0xFF, 0xFF, 0xFF, 0xFE, 0, 0, 1, 0x65]
+        );
+    }
+
+    #[test]
+    fn a_cursor_is_tag_one_and_its_position() {
+        assert_eq!(
+            cursor_message(Point { x: 258, y: 3 }),
+            vec![1, 0, 0, 1, 2, 0, 0, 0, 3]
         );
     }
 }

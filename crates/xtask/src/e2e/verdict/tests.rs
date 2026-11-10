@@ -1,6 +1,6 @@
 use super::{
-    Decoded, HEADER, Shutdown, Tally, distinct, executable, frame_hashes, instance, listening,
-    shutdown_check, spawned, status_check, tally, viewer_checks,
+    CURSOR_TAG, Decoded, FRAME_TAG, HEADER, Shutdown, Tally, distinct, executable, frame_hashes,
+    instance, listening, shutdown_check, spawned, status_check, tally, viewer_checks,
 };
 use crate::report::Check;
 use std::ffi::OsStr;
@@ -12,7 +12,20 @@ const SLICE: [u8; 5] = [0, 0, 0, 1, 0x41];
 const LIMIT: Duration = Duration::from_secs(5);
 
 fn message(unit: &[u8]) -> Vec<u8> {
-    [0u8; HEADER].iter().chain(unit).copied().collect()
+    [FRAME_TAG]
+        .iter()
+        .chain(&[0u8; HEADER - 1])
+        .chain(unit)
+        .copied()
+        .collect()
+}
+
+fn cursor() -> Vec<u8> {
+    [CURSOR_TAG]
+        .iter()
+        .chain(&[0u8; HEADER - 1])
+        .copied()
+        .collect()
 }
 
 fn decoded(frames: usize, distinct: usize, errors: &str) -> Decoded {
@@ -79,6 +92,40 @@ fn a_bare_header_without_a_unit_is_malformed() {
 #[test]
 fn a_message_shorter_than_the_header_is_malformed() {
     assert_eq!(tally(&[vec![0u8; HEADER - 1]], 0).malformed, 1);
+}
+
+#[test]
+fn a_cursor_message_is_counted_and_is_not_a_unit() {
+    assert_eq!(
+        tally(&[cursor(), message(&IDR), cursor()], 0),
+        Tally {
+            units: 1,
+            keys: 1,
+            cursors: 2,
+            first_unit_key: Some(true),
+            stream: IDR.to_vec(),
+            ..Tally::default()
+        }
+    );
+}
+
+#[test]
+fn a_cursor_message_with_trailing_bytes_is_malformed() {
+    let mut long: Vec<u8> = cursor();
+    long.push(0);
+    assert_eq!(tally(&[long], 0).malformed, 1);
+}
+
+#[test]
+fn an_unknown_tag_is_malformed() {
+    let mut unknown: Vec<u8> = message(&IDR);
+    unknown[0] = 2;
+    assert_eq!(tally(&[unknown], 0).malformed, 1);
+}
+
+#[test]
+fn an_empty_message_is_malformed() {
+    assert_eq!(tally(&[Vec::new()], 0).malformed, 1);
 }
 
 #[test]

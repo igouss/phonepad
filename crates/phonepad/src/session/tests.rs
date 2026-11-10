@@ -122,6 +122,7 @@ async fn wired() -> Wired {
         units: units.clone(),
         keyframe: KeyframeRequest::default(),
         view,
+        cursor: watch::Sender::new(None),
         clock: Clock::start(),
     };
     let listener: tokio::net::TcpListener =

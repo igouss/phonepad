@@ -74,6 +74,7 @@ struct State {
     outputs: Vec<NamedOutput>,
     view: watch::Receiver<Option<Size>>,
     sampler: Sampler,
+    cursor: watch::Sender<Option<Point>>,
     units: broadcast::Sender<Unit>,
     keyframe: KeyframeRequest,
     target: Option<Target>,
@@ -95,6 +96,7 @@ pub(super) fn run(stop: &AtomicBool, feed: Feed) -> anyhow::Result<()> {
         outputs: Vec::new(),
         view: feed.view,
         sampler: Sampler::new(Instant::now()),
+        cursor: feed.cursor,
         units: feed.units,
         keyframe: feed.keyframe,
         target: None,
@@ -210,7 +212,7 @@ impl Pool {
         let (mut cropper, h264): (Cropper, H264) = phonepad_h264::open(
             render_node,
             source_size(shape.source),
-            source_size(shape.view),
+            source_size(shape.window),
             QP,
         )
         .with_context(|| format!("open the H.264 encoder for {shape:?}"))?;
@@ -265,6 +267,9 @@ fn wl_buffer(
 impl State {
     fn refresh_target(&mut self) -> anyhow::Result<()> {
         let moved: bool = self.sampler.sample_if_due(Instant::now());
+        if moved {
+            self.cursor.send_replace(self.sampler.at());
+        }
         let changed: bool = self.view.has_changed().unwrap_or(false) || moved;
         if !changed && self.target.is_some() {
             return Ok(());
@@ -282,7 +287,12 @@ impl State {
             self.monitors = hypr::monitors()?;
             self.monitors_at = Some(Instant::now());
         }
-        self.target = plan::target(cursor, view, &self.monitors);
+        self.target = plan::target(
+            cursor,
+            view,
+            &self.monitors,
+            self.target.as_ref().map(|kept: &Target| &kept.window),
+        );
         Ok(())
     }
 

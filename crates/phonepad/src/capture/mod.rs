@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
 use axum::body::Bytes;
-use phonepad_core::geometry::Size;
+use phonepad_core::geometry::{Point, Size};
 use phonepad_core::stream::UnitKind;
 use tokio::sync::{broadcast, watch};
 
@@ -42,6 +42,7 @@ impl KeyframeRequest {
 pub struct Feed {
     pub render_node: PathBuf,
     pub view: watch::Receiver<Option<Size>>,
+    pub cursor: watch::Sender<Option<Point>>,
     pub units: broadcast::Sender<Unit>,
     pub keyframe: KeyframeRequest,
 }

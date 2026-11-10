@@ -116,6 +116,7 @@ mod tests {
             units,
             keyframe: KeyframeRequest::default(),
             view,
+            cursor: watch::Sender::new(None),
             clock: Clock::start(),
         };
         let request: Request = login
