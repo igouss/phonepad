@@ -68,7 +68,7 @@ function sendView() {
   view.height = Math.round(r.height * devicePixelRatio);
   send({ t: "view", w: Math.round(r.width * zoom), h: Math.round(r.height * zoom) });
 }
-let decoder = null, spsId = null, needKey = true, stamp = 0, accel = "prefer-hardware", decoded = false;
+let decoder = null, spsId = null, needKey = true, stamp = 0;
 const heads = [];
 const ack = () => send({ t: "ack" });
 const hex = n => n.toString(16).padStart(2, "0");
@@ -96,7 +96,6 @@ function paint(img, w, h, rx, ry, cx, cy) {
   ctx.beginPath(); ctx.arc(px, py, rad, 0, 2 * Math.PI); ctx.stroke();
 }
 function output(frame) {
-  decoded = true;
   try {
     let head = null;
     while (heads.length && heads[0].ts <= frame.timestamp) { head = heads.shift(); ack(); }
@@ -110,7 +109,6 @@ function restart() {
   if (decoder && decoder.state !== "closed") decoder.reset(); else decoder = null;
 }
 function fail() {
-  if (!decoded) accel = "no-preference";
   while (heads.length) { heads.shift(); ack(); }
   restart();
   send({ t: "key" });
@@ -119,8 +117,8 @@ function configure(sps, id) {
   while (heads.length) { heads.shift(); ack(); }
   if (!decoder || decoder.state === "closed") decoder = new VideoDecoder({ output, error: fail });
   else decoder.reset();
-  decoder.configure({ codec: "avc1." + hex(sps[1]) + hex(sps[2]) + hex(sps[3]), optimizeForLatency: true, hardwareAcceleration: accel });
-  spsId = id; needKey = true; decoded = false;
+  decoder.configure({ codec: "avc1." + hex(sps[1]) + hex(sps[2]) + hex(sps[3]), optimizeForLatency: true, hardwareAcceleration: "prefer-hardware" });
+  spsId = id; needKey = true;
 }
 function onUnit(buf) {
   const h = new DataView(buf, 0, 16);
