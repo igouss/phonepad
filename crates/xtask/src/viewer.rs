@@ -14,7 +14,14 @@ pub const CURSOR_TAG: u8 = 1;
 const LOGIN_HEADER: &str = "Tailscale-User-Login";
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL: Duration = Duration::from_millis(100);
+const MILLIS_PER_SECOND: f64 = 1000.0;
 const VISIBLE: &str = r#"{"t":"visible","v":true}"#;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reports {
+    Acks,
+    AcksAndDrawn,
+}
 
 pub enum Handshake {
     Upgraded(Box<WebSocket<TcpStream>>),
@@ -63,13 +70,26 @@ fn send(socket: &mut WebSocket<TcpStream>, text: &str) -> Result<(), String> {
         .map_err(|e| format!("send {text}: {e}"))
 }
 
-fn ack(payload: &[u8]) -> Option<String> {
+fn frame_id(payload: &[u8]) -> Option<u32> {
     match (payload.first(), payload.get(1..5)) {
         (Some(&FRAME_TAG), Some(id)) if payload.len() >= FRAME_HEADER => {
-            let id: [u8; 4] = id.try_into().ok()?;
-            Some(format!(r#"{{"t":"ack","id":{}}}"#, u32::from_be_bytes(id)))
+            Some(u32::from_be_bytes(id.try_into().ok()?))
         }
         (None | Some(_), None | Some(_)) => None,
+    }
+}
+
+fn replies(payload: &[u8], reports: Reports, at_ms: f64) -> Vec<String> {
+    let Some(id) = frame_id(payload) else {
+        return Vec::new();
+    };
+    let ack: String = format!(r#"{{"t":"ack","id":{id}}}"#);
+    match reports {
+        Reports::Acks => vec![ack],
+        Reports::AcksAndDrawn => vec![
+            ack,
+            format!(r#"{{"t":"drawn","id":{id},"rx":{at_ms},"dec":{at_ms},"at":{at_ms}}}"#),
+        ],
     }
 }
 
@@ -81,6 +101,7 @@ pub fn watch(
     mut socket: Box<WebSocket<TcpStream>>,
     (width, height): (u32, u32),
     watched: Duration,
+    reports: Reports,
 ) -> Result<Received, String> {
     socket
         .get_mut()
@@ -96,8 +117,9 @@ pub fn watch(
     while start.elapsed() < watched {
         match socket.read() {
             Ok(Message::Binary(payload)) => {
-                if let Some(ack) = ack(&payload) {
-                    send(&mut socket, &ack)?;
+                let at_ms: f64 = start.elapsed().as_secs_f64() * MILLIS_PER_SECOND;
+                for reply in replies(&payload, reports, at_ms) {
+                    send(&mut socket, &reply)?;
                 }
                 received.binary.push(payload.to_vec());
             }

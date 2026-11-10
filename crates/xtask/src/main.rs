@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use views::VIEWS_DIR;
 
-const USAGE: &str = "usage: cargo xtask views [--root <dir>] [--out <dir>]\n       cargo xtask check [--root <dir>]\n       cargo xtask h264-check   (needs the Intel iGPU at /dev/dri/renderD128 and the ffmpeg CLI)\n       cargo xtask e2e [--bin <phonepad>]   (needs a live Hyprland session, the iGPU, /dev/uinput and the ffmpeg CLI; serves on port 8769)\n       cargo xtask latency [--bin <phonepad>] <profile>... | calibrate   (needs a live Hyprland session, the iGPU, /dev/uinput and Chromium; serves on port 8771)
+const USAGE: &str = "usage: cargo xtask views [--root <dir>] [--out <dir>]\n       cargo xtask check [--root <dir>]\n       cargo xtask h264-check   (needs the Intel iGPU at /dev/dri/renderD128 and the ffmpeg CLI)\n       cargo xtask e2e [--bin <phonepad>]   (needs a live Hyprland session, the iGPU, /dev/uinput and the ffmpeg CLI; serves on port 8769)\n       cargo xtask latency [--bin <phonepad>] [viewer] [port=<port>] [seconds=<s>] <profile>... | calibrate   (needs a live Hyprland session, the iGPU, /dev/uinput and Chromium; serves on port 8771 unless port= names another)
          profiles: lan, wifi, lte, bad-lte, or rtt=<ms>,jitter=<ms>,rate=<Mbit/s>,loss=<%>
        target/debug/xtask profile <pid> <seconds> [--root <dir>]\n         (run the binary directly: a cargo runner with its own PID namespace hides host processes)";
 
@@ -247,7 +247,7 @@ mod tests {
     fn latency_takes_a_binary_and_profiles() {
         assert!(matches!(
             parse(&args("latency --bin /b/phonepad lan rtt=150,rate=5")),
-            Ok(Task::Latency { bin: Some(_), plan: crate::latency::Plan::Profiles(profiles) }) if profiles.len() == 2
+            Ok(Task::Latency { bin: Some(_), plan: crate::latency::Plan { run: crate::latency::Run::Page(profiles), .. } }) if profiles.len() == 2
         ));
     }
 

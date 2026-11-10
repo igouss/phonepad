@@ -6,7 +6,7 @@ mod stats;
 
 use crate::report::{Check, Report};
 use crate::testbed::{self, Instance, Runtime, Scratch};
-use crate::viewer::{self, Handshake};
+use crate::viewer::{self, Handshake, Reports};
 use browser::{Browser, PHONE};
 use link::Profile;
 use mover::Mover;
@@ -18,12 +18,12 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const PORT: u16 = 8771;
+const DEFAULT_PORT: u16 = 8771;
 const LOGIN: &str = "test@example.invalid";
 const RUNTIME_NAME: &str = "pplat";
 const TIMINGS: (&str, &str) = ("PHONEPAD_TIMINGS", "1");
 const SETTLE: Duration = Duration::from_secs(3);
-const MEASURED: Duration = Duration::from_secs(15);
+const DEFAULT_MEASURED: Duration = Duration::from_secs(15);
 const FIRST_UNIT_TIMEOUT: Duration = Duration::from_secs(20);
 const VIEWER_VIEW: (u32, u32) = (648, 1072);
 const ADDED_RTT_MS: [u64; 2] = [100, 200];
@@ -33,22 +33,86 @@ const CAP_FLOOR_MBIT: f64 = 1.9;
 const BULK_BYTES: usize = 750_000;
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Plan {
-    Profiles(Vec<Profile>),
+pub enum Run {
+    Page(Vec<Profile>),
+    Viewer(Vec<Profile>),
     Calibrate,
 }
 
-pub fn plan(words: &[&str]) -> Result<Plan, String> {
-    match words {
-        [] => Err(String::from(
-            "latency needs a profile: lan, wifi, lte, bad-lte, rtt=<ms>,jitter=<ms>,rate=<Mbit/s>,loss=<%>, or calibrate",
-        )),
-        ["calibrate"] => Ok(Plan::Calibrate),
-        profiles => profiles
-            .iter()
-            .map(|word: &&str| link::parse(word))
-            .collect::<Result<Vec<Profile>, String>>()
-            .map(Plan::Profiles),
+#[derive(Debug, PartialEq, Eq)]
+pub struct Plan {
+    pub run: Run,
+    pub port: u16,
+    pub measured: Duration,
+}
+
+#[derive(Default)]
+struct Words<'a> {
+    viewer: bool,
+    port: Option<u16>,
+    seconds: Option<u64>,
+    rest: Vec<&'a str>,
+}
+
+fn option<T: std::str::FromStr>(key: &str, value: &str) -> Result<T, String> {
+    value
+        .parse::<T>()
+        .map_err(|_| format!("{key}= needs a positive integer, got `{value}`"))
+}
+
+fn words<'a>(all: &[&'a str]) -> Result<Words<'a>, String> {
+    all.iter()
+        .try_fold(Words::default(), |mut words: Words<'a>, word: &&'a str| {
+            match (word.split_once('='), *word) {
+                (Some(("port", value)), _) => words.port = Some(option("port", value)?),
+                (Some(("seconds", value)), _) => words.seconds = Some(option("seconds", value)?),
+                (None, "viewer") => words.viewer = true,
+                (Some(_) | None, _) => words.rest.push(word),
+            }
+            Ok(words)
+        })
+}
+
+pub fn plan(all: &[&str]) -> Result<Plan, String> {
+    let words: Words = words(all)?;
+    let run: Run = match (words.viewer, words.rest.as_slice()) {
+        (_, []) => {
+            return Err(String::from(
+                "latency needs a profile: lan, wifi, lte, bad-lte, rtt=<ms>,jitter=<ms>,rate=<Mbit/s>,loss=<%>, or calibrate",
+            ));
+        }
+        (false, ["calibrate"]) => Run::Calibrate,
+        (true, ["calibrate"]) => {
+            return Err(String::from("calibrate always uses the acking viewer"));
+        }
+        (viewer, profiles) => {
+            let profiles: Vec<Profile> = profiles
+                .iter()
+                .map(|word: &&str| link::parse(word))
+                .collect::<Result<Vec<Profile>, String>>()?;
+            if viewer {
+                Run::Viewer(profiles)
+            } else {
+                Run::Page(profiles)
+            }
+        }
+    };
+    Ok(Plan {
+        run,
+        port: words.port.unwrap_or(DEFAULT_PORT),
+        measured: match words.seconds {
+            Some(0) => return Err(String::from("seconds= must be at least 1")),
+            Some(seconds) => Duration::from_secs(seconds),
+            None => DEFAULT_MEASURED,
+        },
+    })
+}
+
+fn runtime_name(port: u16) -> String {
+    if port == DEFAULT_PORT {
+        String::from(RUNTIME_NAME)
+    } else {
+        format!("{RUNTIME_NAME}{port}")
     }
 }
 
@@ -106,13 +170,14 @@ fn measure(
     instance: &Instance,
     emulator: &Emulator,
     phases: &[Profile],
+    measured: Duration,
 ) -> Result<Vec<Summary>, String> {
     phases
         .iter()
         .map(|profile: &Profile| {
             emulator.set(profile.clone());
             collect(instance.lines(), SETTLE)?;
-            let collected: Collected = collect(instance.lines(), MEASURED)?;
+            let collected: Collected = collect(instance.lines(), measured)?;
             report.line(
                 &format!("{} records", profile.name),
                 collected.malformed.is_empty() && !collected.samples.is_empty(),
@@ -126,7 +191,7 @@ fn measure(
                         .map_or_else(String::new, |line: &String| format!(", first: {line}"))
                 ),
             );
-            Ok(stats::summarize(&collected.samples, MEASURED))
+            Ok(stats::summarize(&collected.samples, measured))
         })
         .collect()
 }
@@ -145,9 +210,14 @@ fn page(scratch: &Scratch, emulator: &Emulator) -> Result<Option<Browser>, Strin
     Ok(Some(browser))
 }
 
-fn viewer(emulator: &Emulator, phases: usize) -> Result<Option<Browser>, String> {
+fn viewer(
+    emulator: &Emulator,
+    phases: usize,
+    measured: Duration,
+    reports: Reports,
+) -> Result<Option<Browser>, String> {
     let watched: Duration = FIRST_UNIT_TIMEOUT
-        + (SETTLE + MEASURED) * u32::try_from(phases).map_err(|e| e.to_string())?;
+        + (SETTLE + measured) * u32::try_from(phases).map_err(|e| e.to_string())?;
     let socket: Box<tungstenite::WebSocket<std::net::TcpStream>> =
         match viewer::handshake(emulator.port, Some(LOGIN))? {
             Handshake::Upgraded(socket) => socket,
@@ -155,7 +225,7 @@ fn viewer(emulator: &Emulator, phases: usize) -> Result<Option<Browser>, String>
                 return Err(format!("viewer handshake refused with HTTP {status}"));
             }
         };
-    thread::spawn(move || viewer::watch(socket, VIEWER_VIEW, watched));
+    thread::spawn(move || viewer::watch(socket, VIEWER_VIEW, watched, reports));
     println!(
         "INFO viewer acking each frame on receipt, view {}x{}, through the emulator on port {}",
         VIEWER_VIEW.0, VIEWER_VIEW.1, emulator.port
@@ -171,18 +241,25 @@ fn streamed(
     phases: &[Profile],
 ) -> Result<Vec<Summary>, String> {
     let first: Profile = phases.first().cloned().ok_or("no profile to measure")?;
-    let emulator: Emulator = Emulator::start(PORT, first)?;
+    let emulator: Emulator = Emulator::start(plan.port, first)?;
     let mover: Mover = Mover::start()?;
-    let browser: Option<Browser> = match plan {
-        Plan::Profiles(_) => page(scratch, &emulator)?,
-        Plan::Calibrate => viewer(&emulator, phases.len())?,
+    let browser: Option<Browser> = match plan.run {
+        Run::Page(_) => page(scratch, &emulator)?,
+        Run::Viewer(_) => viewer(
+            &emulator,
+            phases.len(),
+            plan.measured,
+            Reports::AcksAndDrawn,
+        )?,
+        Run::Calibrate => viewer(&emulator, phases.len(), plan.measured, Reports::Acks)?,
     };
     report.line(
         "first-unit",
         true,
         format!("first acked unit after {:?}", first_unit(instance.lines())?),
     );
-    let summaries: Result<Vec<Summary>, String> = measure(report, instance, &emulator, phases);
+    let summaries: Result<Vec<Summary>, String> =
+        measure(report, instance, &emulator, phases, plan.measured);
     browser.into_iter().for_each(Browser::close);
     mover.stop()?;
     summaries
@@ -216,16 +293,17 @@ fn bench(report: &mut Report, bin: Option<PathBuf>, plan: Plan) -> Result<(), St
         None => testbed::build(&crate::views::own_root()?)?,
     };
     println!("INFO binary: {}", bin.display());
+    let port: u16 = plan.port;
     drop(
-        TcpListener::bind((Ipv4Addr::LOCALHOST, PORT))
-            .map_err(|e| format!("port {PORT} is not free: {e}"))?,
+        TcpListener::bind((Ipv4Addr::LOCALHOST, port))
+            .map_err(|e| format!("port {port} is not free: {e}"))?,
     );
-    let phases: Vec<Profile> = match &plan {
-        Plan::Profiles(profiles) => profiles.clone(),
-        Plan::Calibrate => calibration()?,
+    let phases: Vec<Profile> = match &plan.run {
+        Run::Page(profiles) | Run::Viewer(profiles) => profiles.clone(),
+        Run::Calibrate => calibration()?,
     };
     let scratch: Scratch = Scratch::create("latency")?;
-    let runtime: Runtime = Runtime::create(RUNTIME_NAME)?;
+    let runtime: Runtime = Runtime::create(&runtime_name(port))?;
     runtime
         .checks()
         .into_iter()
@@ -235,7 +313,7 @@ fn bench(report: &mut Report, bin: Option<PathBuf>, plan: Plan) -> Result<(), St
     if !report.passed() {
         return Ok(());
     }
-    let mut instance: Instance = Instance::spawn(&bin, &runtime, &path, (PORT, LOGIN), &[TIMINGS])?;
+    let mut instance: Instance = Instance::spawn(&bin, &runtime, &path, (port, LOGIN), &[TIMINGS])?;
     let listened: Duration = instance.listen()?;
     report.line("listening", true, format!("listen line after {listened:?}"));
     let summaries: Result<Vec<Summary>, String> =
@@ -254,9 +332,9 @@ fn bench(report: &mut Report, bin: Option<PathBuf>, plan: Plan) -> Result<(), St
         .for_each(|(profile, summary): (&Profile, &Summary)| {
             println!("{}", stats::row(profile, summary))
         });
-    match plan {
-        Plan::Profiles(_) => Ok(()),
-        Plan::Calibrate => calibrated(report, &summaries),
+    match plan.run {
+        Run::Page(_) | Run::Viewer(_) => Ok(()),
+        Run::Calibrate => calibrated(report, &summaries),
     }
 }
 

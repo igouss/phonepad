@@ -1,4 +1,6 @@
-use super::{Handshake, LOGIN_HEADER, Received, ack, handshake, request, timed_out, watch};
+use super::{
+    Handshake, LOGIN_HEADER, Received, Reports, handshake, replies, request, timed_out, watch,
+};
 use std::io::{Error, ErrorKind};
 use std::net::{TcpListener, TcpStream};
 use std::thread::{self, JoinHandle};
@@ -70,24 +72,56 @@ fn frame(id: u8) -> Vec<u8> {
 #[test]
 fn a_frame_is_acked_by_its_id() {
     assert_eq!(
-        ack(&[0, 1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-        Some(String::from(r#"{"t":"ack","id":16909060}"#))
+        replies(
+            &[0, 1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            Reports::Acks,
+            7.5
+        ),
+        vec![String::from(r#"{"t":"ack","id":16909060}"#)]
+    );
+}
+
+#[test]
+fn a_reporting_viewer_follows_each_ack_with_a_drawn_report_at_receipt() {
+    assert_eq!(
+        replies(
+            &[0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            Reports::AcksAndDrawn,
+            7.5
+        ),
+        vec![
+            String::from(r#"{"t":"ack","id":9}"#),
+            String::from(r#"{"t":"drawn","id":9,"rx":7.5,"dec":7.5,"at":7.5}"#)
+        ]
     );
 }
 
 #[test]
 fn a_cursor_message_is_not_acked() {
-    assert_eq!(ack(&CURSOR), None);
+    assert_eq!(
+        replies(&CURSOR, Reports::AcksAndDrawn, 1.0),
+        Vec::<String>::new()
+    );
 }
 
 #[test]
 fn a_frame_shorter_than_its_header_is_not_acked() {
-    assert_eq!(ack(&[0, 1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0]), None);
+    assert_eq!(
+        replies(
+            &[0, 1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0],
+            Reports::AcksAndDrawn,
+            1.0
+        ),
+        Vec::<String>::new()
+    );
 }
 
 #[test]
 fn an_empty_message_is_not_acked() {
-    assert_eq!(ack(&[]), None);
+    assert_eq!(
+        replies(&[], Reports::AcksAndDrawn, 1.0),
+        Vec::<String>::new()
+    );
 }
 
 fn phone_session(stream: TcpStream) -> Vec<String> {
@@ -109,7 +143,7 @@ fn phone_session(stream: TcpStream) -> Vec<String> {
 #[test]
 fn a_viewer_opens_with_view_and_visible_and_acks_each_frame_by_its_id() {
     let (port, phone): (u16, JoinHandle<Vec<String>>) = server(phone_session);
-    let received: Received = watch(upgraded(port), (648, 1072), WATCHED).unwrap();
+    let received: Received = watch(upgraded(port), (648, 1072), WATCHED, Reports::Acks).unwrap();
     assert_eq!(
         (received.binary, received.texts, phone.join().unwrap()),
         (
@@ -132,7 +166,8 @@ fn a_dropped_connection_ends_the_watch_with_a_read_error() {
         let mut socket: WebSocket<TcpStream> = accept(stream);
         let _opening: [String; 2] = [text(&mut socket), text(&mut socket)];
     });
-    let ended: Result<Received, String> = watch(upgraded(port), (648, 1072), WATCHED);
+    let ended: Result<Received, String> =
+        watch(upgraded(port), (648, 1072), WATCHED, Reports::Acks);
     phone.join().unwrap();
     assert!(
         ended

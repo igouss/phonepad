@@ -2,7 +2,7 @@ mod verdict;
 
 use crate::report::{Check, Report};
 use crate::testbed::{self, Instance, Runtime, SHUTDOWN_PATIENCE, Scratch, Shutdown};
-use crate::viewer::{self, Handshake, Received};
+use crate::viewer::{self, Handshake, Received, Reports};
 use std::ffi::OsString;
 use std::net::{Ipv4Addr, TcpListener};
 use std::path::{Path, PathBuf};
@@ -32,7 +32,7 @@ fn refused(login: Option<&str>) -> Result<u16, String> {
 
 fn watch(watched: Duration) -> Result<Received, String> {
     match viewer::handshake(PORT, Some(LOGIN))? {
-        Handshake::Upgraded(socket) => viewer::watch(socket, VIEW, watched),
+        Handshake::Upgraded(socket) => viewer::watch(socket, VIEW, watched, Reports::Acks),
         Handshake::Refused(status) => Err(format!("handshake refused with HTTP {status}")),
     }
 }
