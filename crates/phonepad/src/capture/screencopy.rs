@@ -373,9 +373,13 @@ impl State {
             .into_iter()
             .zip(idle)
         {
+            let plane: &Dmabuf = pool.surfaces[index].surface.dmabuf();
+            let (width, height): (i32, i32) =
+                (i32::try_from(plane.width)?, i32::try_from(plane.height)?);
             let frame: ExtImageCopyCaptureFrameV1 =
                 pool.sessions[session].proxy.create_frame(qh, index);
             frame.attach_buffer(&pool.surfaces[index].buffer);
+            frame.damage_buffer(0, 0, width, height);
             frame.capture();
             pool.slots[index] = Slot::Capturing { frame, session };
         }
