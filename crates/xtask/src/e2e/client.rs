@@ -97,3 +97,6 @@ pub fn watch(
     socket.close(None).map_err(|e| format!("close: {e}"))?;
     Ok(received)
 }
+
+#[cfg(test)]
+mod tests;
